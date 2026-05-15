@@ -12,7 +12,8 @@ ExecStart=/opt/pik/venv/bin/datasette serve /opt/pik/data/pik.db \
   --metadata /opt/pik/metadata.yml \
   --host 127.0.0.1 --port 5051 \
   --setting truncate_cells_html 0 \
-  --setting max_returned_rows 5000
+  --setting max_returned_rows 25000 \
+  --setting sql_time_limit_ms 3000
 Restart=on-failure
 RestartSec=5
 
