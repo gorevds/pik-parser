@@ -1,4 +1,22 @@
-from pik.store import apply_schema
+from pik.store import apply_schema, upsert
+
+
+SAMPLE_FLAT = {
+    "id": 100, "guid": "g-100", "block_id": 1165, "bulk_id": 10397,
+    "section_id": 23643, "layout_id": 60971, "bulk_name": "Корпус 1.3",
+    "section_no": 3, "floor": 7, "rooms": "1", "rooms_fact": 1, "is_studio": 0,
+    "area": 33.5, "area_kitchen": 8.0, "area_living": 16.2, "number": "1",
+    "name": "Нарвин-1.3(кв)", "url": "https://www.pik.ru/flat/100",
+    "pdf_url": None, "plan_url": None, "ceiling_height": 2.75,
+    "settlement_date": "2027-10-31T00:00:00+00:00", "first_seen": "2026-05-15",
+}
+SAMPLE_SNAPSHOT = {
+    "flat_id": 100, "scan_date": "2026-05-15", "scan_ts": "2026-05-15T06:00+03:00",
+    "status": "free", "price": 12_000_000, "meter_price": 358_209,
+    "old_price": None, "discount": 0, "finish": "С отделкой",
+    "mortgage_min_rate": 6.0, "mortgage_best_name": "Семейная",
+    "updated_at": "2026-05-14T10:00:00+00:00",
+}
 
 
 def test_apply_schema_creates_tables_and_view(conn):
@@ -12,3 +30,45 @@ def test_apply_schema_creates_tables_and_view(conn):
 def test_apply_schema_is_idempotent(conn):
     apply_schema(conn)
     apply_schema(conn)
+
+
+def test_upsert_inserts_new_rows(conn):
+    apply_schema(conn)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[SAMPLE_SNAPSHOT])
+    assert conn.execute("SELECT COUNT(*) FROM flats").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 1
+
+
+def test_upsert_is_idempotent_within_day(conn):
+    apply_schema(conn)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[SAMPLE_SNAPSHOT])
+    snap2 = dict(SAMPLE_SNAPSHOT, price=11_500_000)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[snap2])
+    assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 1
+    price = conn.execute("SELECT price FROM snapshots").fetchone()[0]
+    assert price == 11_500_000
+
+
+def test_upsert_preserves_first_seen_on_reinsert(conn):
+    apply_schema(conn)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[SAMPLE_SNAPSHOT])
+    later = dict(SAMPLE_FLAT, first_seen="2026-05-20")
+    upsert(conn, flats=[later], snapshots=[])
+    assert conn.execute("SELECT first_seen FROM flats").fetchone()[0] == "2026-05-15"
+
+
+def test_upsert_keeps_history_across_days(conn):
+    apply_schema(conn)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[SAMPLE_SNAPSHOT])
+    snap_tomorrow = dict(SAMPLE_SNAPSHOT, scan_date="2026-05-16", price=11_900_000)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[snap_tomorrow])
+    assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 2
+
+
+def test_today_view_returns_latest_only(conn):
+    apply_schema(conn)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[SAMPLE_SNAPSHOT])
+    snap_tomorrow = dict(SAMPLE_SNAPSHOT, scan_date="2026-05-16", price=11_900_000)
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[snap_tomorrow])
+    rows = list(conn.execute("SELECT цена FROM today_one_room"))
+    assert rows == [(11_900_000,)]
