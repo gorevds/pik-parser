@@ -87,15 +87,48 @@ def to_flat_row(item: dict, *, first_seen: str) -> dict:
     }
 
 
+def _detect_promo(price, meter_price, area) -> tuple[int | None, int | None, float | None, int]:
+    """Возвращает (promo_price, base_meter_price, discount_pct, has_promo).
+
+    promo_price       — итог с ипотечной программой = round(meter_price * area)
+    base_meter_price  — цена за м² при оплате налом   = round(price / area)
+    discount_pct      — процент скидки (0..100), None если данных мало
+    has_promo         — 1 если скидка ≥0.5%
+
+    PIK API не отдаёт явный 'benefitDiscount' в листинге, но даёт base price и
+    discounted meterPrice — отсюда вычисляем сами. Сравнение с
+    /v1/flat/{id}.benefitDiscount подтверждает совпадение (см. flat 980492:
+    20.43M base, 442_866 ₽/м² → 7%, что точно совпадает с benefitDiscount=7).
+    """
+    if not (price and meter_price and area) or area <= 0 or price <= 0:
+        return None, None, None, 0
+    promo_price = round(meter_price * area)
+    base_meter = round(price / area)
+    pct = (price - promo_price) / price * 100
+    if pct < 0.5:
+        return promo_price, base_meter, 0.0, 0
+    return promo_price, base_meter, round(pct, 2), 1
+
+
 def to_snapshot_row(item: dict, *, scan_date: str, scan_ts: str) -> dict:
     rate, name = _best_mortgage(item)
+    price = item.get("price")
+    meter_price = item.get("meterPrice")
+    area = item.get("area")
+    promo_price, base_meter, discount_pct, has_promo = _detect_promo(
+        price, meter_price, area
+    )
     return {
         "flat_id":            item["id"],
         "scan_date":          scan_date,
         "scan_ts":            scan_ts,
         "status":             item.get("status"),
-        "price":              item.get("price"),
-        "meter_price":        item.get("meterPrice"),
+        "price":              price,
+        "meter_price":        meter_price,
+        "base_meter_price":   base_meter,
+        "promo_price":        promo_price,
+        "discount_pct":       discount_pct,
+        "has_promo":          has_promo,
         "old_price":          item.get("oldPrice"),
         "discount":           item.get("discount"),
         "finish":             _finish_label(item.get("finish")),

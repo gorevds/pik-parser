@@ -13,6 +13,8 @@ SAMPLE_FLAT = {
 SAMPLE_SNAPSHOT = {
     "flat_id": 100, "scan_date": "2026-05-15", "scan_ts": "2026-05-15T06:00+03:00",
     "status": "free", "price": 12_000_000, "meter_price": 358_209,
+    "base_meter_price": 358_209, "promo_price": 12_000_000,
+    "discount_pct": 0.0, "has_promo": 0,
     "old_price": None, "discount": 0, "finish": "С отделкой",
     "mortgage_min_rate": 6.0, "mortgage_best_name": "Семейная",
     "updated_at": "2026-05-14T10:00:00+00:00",
@@ -70,5 +72,32 @@ def test_today_view_returns_latest_only(conn):
     upsert(conn, flats=[SAMPLE_FLAT], snapshots=[SAMPLE_SNAPSHOT])
     snap_tomorrow = dict(SAMPLE_SNAPSHOT, scan_date="2026-05-16", price=11_900_000)
     upsert(conn, flats=[SAMPLE_FLAT], snapshots=[snap_tomorrow])
-    rows = list(conn.execute("SELECT цена FROM today_one_room"))
+    rows = list(conn.execute("SELECT базовая_цена FROM today_one_room"))
     assert rows == [(11_900_000,)]
+
+
+def test_apply_schema_migrates_old_db_adding_promo_columns(conn):
+    """БД из 0.1.0 (без promo-колонок) не должна крашить apply_schema."""
+    conn.executescript(
+        """
+        CREATE TABLE flats (
+            id INTEGER PRIMARY KEY, guid TEXT NOT NULL, block_id INTEGER NOT NULL,
+            bulk_id INTEGER, section_id INTEGER, layout_id INTEGER,
+            bulk_name TEXT, section_no INTEGER, floor INTEGER, rooms TEXT,
+            rooms_fact INTEGER, is_studio INTEGER, area REAL, area_kitchen REAL,
+            area_living REAL, number TEXT, name TEXT, url TEXT, pdf_url TEXT,
+            plan_url TEXT, ceiling_height REAL, settlement_date TEXT,
+            first_seen TEXT NOT NULL
+        );
+        CREATE TABLE snapshots (
+            flat_id INTEGER NOT NULL, scan_date TEXT NOT NULL, scan_ts TEXT NOT NULL,
+            status TEXT, price INTEGER, meter_price INTEGER, old_price INTEGER,
+            discount INTEGER, finish TEXT, mortgage_min_rate REAL,
+            mortgage_best_name TEXT, updated_at TEXT,
+            PRIMARY KEY (flat_id, scan_date)
+        );
+        """
+    )
+    apply_schema(conn)  # must add missing columns without error
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(snapshots)")}
+    assert {"base_meter_price", "promo_price", "discount_pct", "has_promo"}.issubset(cols)

@@ -3,7 +3,26 @@ from typing import Iterable
 import sqlite3
 
 
+_SNAPSHOTS_NEW_COLS = (
+    ("base_meter_price", "INTEGER"),
+    ("promo_price",      "INTEGER"),
+    ("discount_pct",     "REAL"),
+    ("has_promo",        "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _migrate_snapshots(conn: sqlite3.Connection) -> None:
+    """Добавляет недостающие колонки в snapshots для БД, созданных до 0.2.0."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(snapshots)")}
+    if not existing:
+        return  # таблицы ещё нет — schema.sql сейчас её создаст
+    for col, ddl in _SNAPSHOTS_NEW_COLS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE snapshots ADD COLUMN {col} {ddl}")
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
+    _migrate_snapshots(conn)
     sql = files("pik").joinpath("schema.sql").read_text(encoding="utf-8")
     conn.executescript(sql)
     conn.commit()
@@ -16,9 +35,11 @@ _FLAT_COLS = (
     "pdf_url", "plan_url", "ceiling_height", "settlement_date", "first_seen",
 )
 _SNAP_COLS = (
-    "flat_id", "scan_date", "scan_ts", "status", "price", "meter_price",
-    "old_price", "discount", "finish", "mortgage_min_rate",
-    "mortgage_best_name", "updated_at",
+    "flat_id", "scan_date", "scan_ts", "status",
+    "price", "meter_price", "base_meter_price", "promo_price",
+    "discount_pct", "has_promo",
+    "old_price", "discount", "finish",
+    "mortgage_min_rate", "mortgage_best_name", "updated_at",
 )
 
 

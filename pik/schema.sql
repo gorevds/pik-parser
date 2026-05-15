@@ -29,8 +29,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
     scan_date        TEXT NOT NULL,
     scan_ts          TEXT NOT NULL,
     status           TEXT,
-    price            INTEGER,
-    meter_price      INTEGER,
+    price            INTEGER,         -- база (полная оплата)
+    meter_price      INTEGER,         -- цена за м² с ипотечной программой
+    base_meter_price INTEGER,         -- цена за м² при оплате налом = round(price/area)
+    promo_price      INTEGER,         -- итоговая цена с программой = round(meter_price*area)
+    discount_pct     REAL,            -- размер скидки от базы, 0..100
+    has_promo        INTEGER NOT NULL DEFAULT 0,  -- 1 если discount_pct >= 0.5
     old_price        INTEGER,
     discount         INTEGER,
     finish           TEXT,
@@ -41,25 +45,35 @@ CREATE TABLE IF NOT EXISTS snapshots (
     FOREIGN KEY (flat_id) REFERENCES flats(id)
 );
 
+-- safe migration для существующих БД: добавляем колонки если их ещё нет
+-- (apply_schema идемпотентен)
+
 CREATE INDEX IF NOT EXISTS idx_snap_date  ON snapshots(scan_date);
 CREATE INDEX IF NOT EXISTS idx_flat_rooms ON flats(rooms);
 
-DROP VIEW IF EXISTS today_one_room;
-CREATE VIEW today_one_room AS
+-- Сегодняшний срез: ВСЕ квартиры со всеми ценами (база + с программой)
+DROP VIEW IF EXISTS today_all;
+CREATE VIEW today_all AS
 SELECT
     f.id                      AS id,
+    CASE f.rooms
+        WHEN 'studio' THEN 'студия'
+        WHEN '-1'     THEN 'студия'
+        ELSE f.rooms || 'к'
+    END                       AS комнат,
     f.bulk_name               AS корпус,
     f.section_no              AS секция,
     f.floor                   AS этаж,
     f.area                    AS "площадь_м²",
-    s.price                   AS цена,
-    s.meter_price             AS "цена_за_м²",
-    s.old_price               AS старая_цена,
-    s.discount                AS скидка,
+    s.price                   AS базовая_цена,
+    s.promo_price             AS "цена_по_программе",
+    s.base_meter_price        AS "база_за_м²",
+    s.meter_price             AS "по_программе_за_м²",
+    s.has_promo               AS "промо",
+    s.discount_pct            AS "скидка_%",
+    s.mortgage_best_name      AS программа,
     s.status                  AS статус,
     s.finish                  AS отделка,
-    s.mortgage_min_rate       AS "мин_ставка_%",
-    s.mortgage_best_name      AS программа,
     f.settlement_date         AS заселение,
     f.name                    AS артикул,
     f.url                     AS ссылка,
@@ -67,7 +81,9 @@ SELECT
     s.scan_date               AS дата_среза
 FROM flats f
 JOIN snapshots s ON s.flat_id = f.id
-WHERE s.scan_date = (
-    SELECT MAX(scan_date) FROM snapshots
-)
-AND f.rooms = '1';
+WHERE s.scan_date = (SELECT MAX(scan_date) FROM snapshots);
+
+-- Обратная совместимость: тот же набор колонок, но только 1-к
+DROP VIEW IF EXISTS today_one_room;
+CREATE VIEW today_one_room AS
+SELECT * FROM today_all WHERE комнат = '1к';

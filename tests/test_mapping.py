@@ -118,3 +118,48 @@ def test_to_flat_row_handles_studio():
     row = to_flat_row(item, first_seen="2026-05-15")
     assert row["rooms"] == "studio"
     assert row["is_studio"] == 1
+
+
+def test_promo_detection_for_known_discounted_flat():
+    """Flat 980492 на pik.gorev.space: price=20428980, meterPrice=442866, area=42.9
+    дают ~7% скидку (совпадает с benefitDiscount=7 из /v1/flat/980492).
+    """
+    item = {
+        "id": 980492, "guid": "g", "block_id": 1165, "rooms": 1,
+        "bulk": {}, "section": {}, "layout": {},
+        "price": 20_428_980, "meterPrice": 442_866, "area": 42.9,
+        "status": "free",
+    }
+    row = to_snapshot_row(item, scan_date="2026-05-15", scan_ts="t")
+    assert row["promo_price"] == 18_998_951  # 442_866 * 42.9
+    assert row["base_meter_price"] == 476_200  # 20_428_980 / 42.9
+    assert 6.9 < row["discount_pct"] < 7.1
+    assert row["has_promo"] == 1
+
+
+def test_no_promo_when_prices_match():
+    """Flat 979630: price=18472960, meterPrice=524800, area=35.2 — нет скидки."""
+    item = {
+        "id": 979630, "guid": "g", "block_id": 1165, "rooms": 1,
+        "bulk": {}, "section": {}, "layout": {},
+        "price": 18_472_960, "meterPrice": 524_800, "area": 35.2,
+        "status": "free",
+    }
+    row = to_snapshot_row(item, scan_date="x", scan_ts="t")
+    assert row["has_promo"] == 0
+    assert row["discount_pct"] == 0.0
+    assert row["promo_price"] is not None
+
+
+def test_promo_fields_none_when_data_missing():
+    item = {
+        "id": 1, "guid": "g", "block_id": 1165, "rooms": 1,
+        "bulk": {}, "section": {}, "layout": {},
+        "price": None, "meterPrice": None, "area": None,
+        "status": "free",
+    }
+    row = to_snapshot_row(item, scan_date="x", scan_ts="t")
+    assert row["promo_price"] is None
+    assert row["base_meter_price"] is None
+    assert row["discount_pct"] is None
+    assert row["has_promo"] == 0
