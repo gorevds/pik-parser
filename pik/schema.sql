@@ -59,6 +59,27 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS idx_snap_date  ON snapshots(scan_date);
 CREATE INDEX IF NOT EXISTS idx_flat_rooms ON flats(rooms);
 
+-- Агрегированная история из не-PIK источников: Cian, mskguru, новости и т.п.
+-- Для каждой строки — на какую дату относится цена и какой ЖК.
+CREATE TABLE IF NOT EXISTS history_aggregated (
+    block_id        INTEGER NOT NULL,
+    date            TEXT NOT NULL,
+    source          TEXT NOT NULL,
+    source_url      TEXT,
+    rooms           TEXT NOT NULL DEFAULT 'all',
+    price_min       INTEGER,
+    price_max       INTEGER,
+    price_avg       INTEGER,
+    meter_price_min INTEGER,
+    meter_price_max INTEGER,
+    meter_price_avg INTEGER,
+    notes           TEXT,
+    PRIMARY KEY (block_id, date, source, rooms),
+    FOREIGN KEY (block_id) REFERENCES blocks(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hist_block_date ON history_aggregated(block_id, date);
+
 -- Сегодняшний срез: ВСЕ квартиры со всеми ценами (база + с программой) +
 -- по всем ЖК. Колонка `жк` = название проекта из блока (если зарегистрирован).
 DROP VIEW IF EXISTS today_all;
