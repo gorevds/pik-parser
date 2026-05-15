@@ -15,7 +15,7 @@ SVC_USER="pik"
 id -u "$SVC_USER" &>/dev/null || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SVC_USER"
 
 # 2. Раскладка кода (исключаем рабочие артефакты)
-install -d -o "$SVC_USER" -g "$SVC_USER" "$APP_DIR" "$APP_DIR/data"
+install -d -o "$SVC_USER" -g "$SVC_USER" "$APP_DIR" "$APP_DIR/data" "$APP_DIR/static"
 rsync -a --delete \
   --exclude='data/' --exclude='.git/' --exclude='venv/' --exclude='__pycache__/' \
   --exclude='.pytest_cache/' --exclude='*.egg-info' \
@@ -33,9 +33,12 @@ install -m 644 "$APP_DIR/deploy/pik-scan.service" /etc/systemd/system/pik-scan.s
 install -m 644 "$APP_DIR/deploy/pik-scan.timer"   /etc/systemd/system/pik-scan.timer
 systemctl daemon-reload
 
-# 5. Первый прогон скана (наполняет БД)
+# 5. Первый прогон скана (обновляет схему + наполняет БД)
 systemctl start pik-scan.service
 journalctl -u pik-scan.service --no-pager | tail -20
+
+# Перезапуск Datasette после изменения схемы (он держит соединение с pik.db)
+systemctl restart pik.service 2>/dev/null || true
 
 # 6. Поднимаем datasette + ежедневный таймер
 systemctl enable --now pik.service

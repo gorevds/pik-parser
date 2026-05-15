@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ЖК Нарвин — цены ПИК</title>
+<link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_modern.min.css" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --fg: #1f2937;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --promo: #16a34a;
+    --promo-bg: #dcfce7;
+    --card: #ffffff;
+    --border: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 14px;
+  }
+  header {
+    background: var(--card);
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 18px;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  header .stats {
+    color: var(--muted);
+    font-size: 13px;
+    display: flex;
+    gap: 16px;
+  }
+  header .stats b { color: var(--fg); }
+  header a { color: var(--accent); text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+  main { padding: 16px 24px 24px; }
+  #grid {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .promo-row { background: var(--promo-bg) !important; }
+  .promo-badge {
+    display: inline-block;
+    background: var(--promo);
+    color: white;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .tabulator { font-size: 13px; }
+  .tabulator-row .tabulator-cell { padding: 6px 10px; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .struck { text-decoration: line-through; color: var(--muted); }
+  footer {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    padding: 16px;
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .controls button {
+    border: 1px solid var(--border);
+    background: var(--card);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .controls button:hover { border-color: var(--accent); color: var(--accent); }
+  .controls button.active { background: var(--accent); color: white; border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ЖК Нарвин — квартиры</h1>
+  <div class="stats" id="stats">загрузка…</div>
+  <div style="margin-left:auto">
+    <a href="/pik/today_all" target="_blank">сырые данные</a>
+    ·
+    <a href="/pik/snapshots?_sort_desc=scan_date" target="_blank">история</a>
+    ·
+    <a href="https://github.com/gorevds/pik-parser" target="_blank">репо</a>
+  </div>
+</header>
+
+<main>
+  <div class="controls">
+    <span>Комнат:</span>
+    <button data-rooms="all" class="active">все</button>
+    <button data-rooms="студия">студии</button>
+    <button data-rooms="1к">1к</button>
+    <button data-rooms="2к">2к</button>
+    <button data-rooms="3к">3к</button>
+    <span style="color:var(--muted);margin-left:8px">|</span>
+    <label><input type="checkbox" id="promoOnly"> только со скидкой</label>
+  </div>
+  <div id="grid"></div>
+</main>
+
+<footer id="footer"></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+<script>
+const fmtMoney = (cell) => {
+  const v = cell.getValue();
+  if (v === null || v === undefined || v === "") return "";
+  return Number(v).toLocaleString("ru-RU") + " ₽";
+};
+const fmtMeter = (cell) => {
+  const v = cell.getValue();
+  if (v === null || v === undefined || v === "") return "";
+  return Number(v).toLocaleString("ru-RU") + " ₽/м²";
+};
+const fmtPct = (cell) => {
+  const v = cell.getValue();
+  if (v === null || v === undefined || v === "") return "";
+  if (v === 0) return "—";
+  return Number(v).toFixed(1) + "%";
+};
+const fmtBaseWithStrike = (cell) => {
+  const v = cell.getValue();
+  if (v === null || v === undefined || v === "") return "";
+  const row = cell.getRow().getData();
+  const text = Number(v).toLocaleString("ru-RU") + " ₽";
+  if (row["промо"] === 1) {
+    return `<span class="struck">${text}</span>`;
+  }
+  return text;
+};
+const fmtPromoBadge = (cell) => {
+  return cell.getValue() === 1 ? `<span class="promo-badge">скидка</span>` : "";
+};
+const fmtLink = (cell) => {
+  const v = cell.getValue();
+  if (!v) return "";
+  return `<a href="${v}" target="_blank" rel="noopener">pik.ru ↗</a>`;
+};
+
+const rowFormatter = (row) => {
+  if (row.getData()["промо"] === 1) {
+    row.getElement().classList.add("promo-row");
+  }
+};
+
+const columns = [
+  {title: "ID", field: "id", width: 80, headerFilter: "input"},
+  {title: "Комнат", field: "комнат", width: 90, headerFilter: "list",
+   headerFilterParams: {values: ["", "студия", "1к", "2к", "3к", "4к"]}},
+  {title: "Корпус", field: "корпус", width: 110, headerFilter: "input"},
+  {title: "Секц.", field: "секция", width: 65, hozAlign: "center", headerFilter: "input"},
+  {title: "Этаж", field: "этаж", width: 70, hozAlign: "center", sorter: "number", headerFilter: "input"},
+  {title: "м²", field: "площадь_м²", width: 75, hozAlign: "right", sorter: "number",
+   formatter: (c) => c.getValue() != null ? Number(c.getValue()).toFixed(1) : ""},
+  {title: "База", field: "базовая_цена", hozAlign: "right",
+   sorter: "number", formatter: fmtBaseWithStrike, minWidth: 150},
+  {title: "С программой", field: "цена_по_программе", hozAlign: "right",
+   sorter: "number", formatter: fmtMoney, minWidth: 150},
+  {title: "Скидка", field: "скидка_%", hozAlign: "right",
+   sorter: "number", formatter: fmtPct, width: 90},
+  {title: "", field: "промо", hozAlign: "center",
+   formatter: fmtPromoBadge, width: 70, headerSort: false},
+  {title: "База/м²", field: "база_за_м²", hozAlign: "right",
+   sorter: "number", formatter: fmtMeter, minWidth: 130},
+  {title: "Программа", field: "программа", minWidth: 160, headerFilter: "input"},
+  {title: "Отделка", field: "отделка", width: 110, headerFilter: "list",
+   headerFilterParams: {values: ["", "С отделкой", "С отделкой и мебелью", "WhiteBox", "Без отделки"]}},
+  {title: "Заселение", field: "заселение", width: 110,
+   formatter: (c) => {
+     const v = c.getValue();
+     if (!v) return "";
+     return v.slice(0, 10);
+   }},
+  {title: "Статус", field: "статус", width: 90, headerFilter: "list",
+   headerFilterParams: {values: ["", "free", "reserve", "sold"]}},
+  {title: "PIK", field: "ссылка", width: 90, formatter: fmtLink, headerSort: false},
+];
+
+let table;
+let allRows = [];
+let currentRoom = "all";
+let promoOnly = false;
+
+function applyFilter() {
+  let rows = allRows;
+  if (currentRoom !== "all") rows = rows.filter(r => r["комнат"] === currentRoom);
+  if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
+  table.replaceData(rows);
+  document.getElementById("stats").innerHTML = renderStats(rows);
+}
+
+function renderStats(rows) {
+  if (!rows.length) return "<span>0 квартир</span>";
+  const promo = rows.filter(r => r["промо"] === 1).length;
+  const prices = rows.map(r => r["базовая_цена"]).filter(Boolean);
+  const min = Math.min(...prices), max = Math.max(...prices);
+  const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+  const date = rows[0]["дата_среза"] || "—";
+  return `
+    <span><b>${rows.length}</b> квартир</span>
+    <span>цена: <b>${min.toLocaleString("ru-RU")}</b> – <b>${max.toLocaleString("ru-RU")}</b> ₽</span>
+    <span>средняя: <b>${avg.toLocaleString("ru-RU")}</b> ₽</span>
+    <span>со скидкой: <b>${promo}</b></span>
+    <span>срез: <b>${date}</b></span>
+  `;
+}
+
+async function load() {
+  const resp = await fetch("/pik/today_all.json?_shape=array&_size=max");
+  const rows = await resp.json();
+  allRows = rows;
+
+  table = new Tabulator("#grid", {
+    data: rows,
+    columns,
+    layout: "fitDataStretch",
+    height: "calc(100vh - 230px)",
+    rowFormatter,
+    initialSort: [{column: "базовая_цена", dir: "asc"}],
+    pagination: false,
+    persistence: false,
+  });
+
+  applyFilter();
+
+  document.querySelectorAll(".controls button[data-rooms]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".controls button[data-rooms]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentRoom = btn.dataset.rooms;
+      applyFilter();
+    });
+  });
+  document.getElementById("promoOnly").addEventListener("change", (e) => {
+    promoOnly = e.target.checked;
+    applyFilter();
+  });
+
+  const last = rows[0]?.["дата_среза"] || "—";
+  document.getElementById("footer").textContent =
+    `Источник: api.pik.ru/v2/flat?block_id=1165. Скан каждый день 06:00 МСК. Последний срез: ${last}.`;
+}
+load().catch((e) => {
+  document.getElementById("grid").innerHTML =
+    `<div style="padding:24px;color:#b91c1c">Ошибка загрузки: ${e}</div>`;
+});
+</script>
+</body>
+</html>
