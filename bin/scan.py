@@ -16,6 +16,8 @@ from pathlib import Path
 from pik.client import PikClient, PikApiError
 from pik.mapping import to_flat_row, to_snapshot_row
 from pik.store import apply_schema, upsert
+from pik.geo import extract_block_meta
+from pik.blocks_meta import upsert_block_meta
 
 
 MSK = timezone(timedelta(hours=3))
@@ -46,24 +48,26 @@ def run_once(db_path: Path, block_id: int) -> int:
     flats = [to_flat_row(it, first_seen=scan_date) for it in items]
     snaps = [to_snapshot_row(it, scan_date=scan_date, scan_ts=scan_ts) for it in items]
 
-    # Имя ЖК берём из первого item.block.name (или fallback)
+    # Имя ЖК + slug + гео-метаданные берём из первого item
     block_name = None
+    block_slug = None
+    block_meta = {}
     if items:
         b = items[0].get("block")
         if isinstance(b, dict):
             block_name = b.get("name")
+            block_slug = (b.get("url") or "").strip("/") or None
+        block_meta = extract_block_meta(items[0], slug=block_slug)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         apply_schema(conn)
         upsert(conn, flats=flats, snapshots=snaps)
         if block_name:
-            conn.execute(
-                "INSERT INTO blocks (id, name, slug, updated_at) VALUES (?, ?, NULL, ?) "
-                "ON CONFLICT (id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
-                (block_id, block_name, scan_ts),
+            upsert_block_meta(
+                conn, block_id=block_id, name=block_name,
+                slug=block_slug, meta=block_meta, scan_ts=scan_ts,
             )
-            conn.commit()
         one_room = conn.execute(
             "SELECT COUNT(*) FROM flats f JOIN snapshots s ON s.flat_id=f.id "
             "WHERE s.scan_date=? AND f.rooms='1' AND f.block_id=?",

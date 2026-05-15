@@ -1,9 +1,20 @@
--- Справочник ЖК: id (PIK block_id) → имя/url, для UI и мульти-проектной витрины
+-- Справочник ЖК: id (PIK block_id) → имя/url + гео-метаданные.
+-- Эти поля стабильны на уровне проекта и не дублируются в snapshots/flats.
 CREATE TABLE IF NOT EXISTS blocks (
-    id    INTEGER PRIMARY KEY,
-    name  TEXT NOT NULL,
-    slug  TEXT,
-    updated_at TEXT
+    id                 INTEGER PRIMARY KEY,
+    name               TEXT NOT NULL,
+    slug               TEXT,
+    updated_at         TEXT,
+    metro_name         TEXT,        -- ближайшая станция (по timeOnFoot)
+    metro_line_name    TEXT,        -- название линии (Замоскворецкая / МЦК / МЦД-2)
+    metro_line_type    INTEGER,     -- 1=метро 2=МЦК 3=МЦД 4=электричка
+    metro_time_foot    INTEGER,     -- минут пешком до станции
+    metro_time_transport INTEGER,   -- минут на транспорте (если пешком далеко)
+    latitude           REAL,        -- координаты ЖК
+    longitude          REAL,
+    address            TEXT,
+    distance_km        REAL,        -- расстояние от центра города (Кремль для Москвы)
+    floors_max         INTEGER      -- этажность здания
 );
 
 CREATE TABLE IF NOT EXISTS flats (
@@ -91,6 +102,17 @@ SELECT
         WHEN b.slug LIKE '%/%' THEN substr(b.slug, 1, instr(b.slug, '/') - 1)
         ELSE 'msk'
     END                       AS город,
+    b.metro_name              AS метро,
+    CASE b.metro_line_type
+        WHEN 1 THEN 'M'
+        WHEN 2 THEN 'МЦК'
+        WHEN 3 THEN 'МЦД'
+        WHEN 4 THEN 'электр.'
+        ELSE NULL
+    END                       AS тип_транспорта,
+    b.metro_time_foot         AS "мин_пешком",
+    b.metro_line_name         AS линия,
+    b.distance_km             AS "км_от_центра",
     CASE f.rooms
         WHEN 'studio' THEN 'студия'
         WHEN '-1'     THEN 'студия'
@@ -110,6 +132,8 @@ SELECT
     s.status                  AS статус,
     s.finish                  AS отделка,
     f.settlement_date         AS заселение,
+    b.floors_max              AS "этажей_всего",
+    b.address                 AS адрес,
     f.name                    AS артикул,
     f.url                     AS ссылка,
     f.plan_url                AS планировка,

@@ -183,14 +183,36 @@ const columns = [
        novorossiisk:"Новороссийск", tyumen:"Тюмень", obninsk:"Обнинск"};
      return labels[c.getValue()] || c.getValue() || "";
    }},
-  {title: "ЖК", field: "жк", width: 195, headerFilter: "input"},
+  {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
+  {title: "Метро", field: "метро", width: 160, headerFilter: "input",
+   formatter: (c) => {
+     const r = c.getRow().getData();
+     const name = c.getValue();
+     if (!name) return "";
+     const type = r["тип_транспорта"];
+     const t = r["мин_пешком"];
+     const badge = type ? `<span style="background:${type==='M'?'#ef4444':type==='МЦК'?'#fbbf24':type==='МЦД'?'#3b82f6':'#6b7280'};color:white;border-radius:3px;padding:1px 4px;font-size:10px;margin-right:4px">${type}</span>` : '';
+     const time = t ? ` <span style="color:var(--muted)">· ${t} мин</span>` : '';
+     return `${badge}${name}${time}`;
+   }},
+  {title: "Линия", field: "линия", width: 165, headerFilter: "input"},
+  {title: "Км от центра", field: "км_от_центра", width: 130, hozAlign: "right", headerHozAlign: "right",
+   sorter: "number",
+   formatter: (c) => c.getValue() != null ? Number(c.getValue()).toFixed(1) + " км" : ""},
   {title: "Комнат", field: "комнат", width: 110, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list",
    headerFilterParams: {values: ["", "студия", "1к", "2к", "3к", "4к"]}},
   {title: "Корпус", field: "корпус", width: 130, headerFilter: "input"},
   {title: "Секция", field: "секция", width: 100, hozAlign: "center", headerHozAlign: "center", headerFilter: "input"},
   {title: "Этаж", field: "этаж", width: 95, hozAlign: "center", headerHozAlign: "center",
-   sorter: "number", headerFilter: "input"},
+   sorter: "number", headerFilter: "input",
+   formatter: (c) => {
+     const r = c.getRow().getData();
+     const f = c.getValue();
+     const total = r["этажей_всего"];
+     if (f == null) return "";
+     return total ? `${f} / ${total}` : String(f);
+   }},
   {title: "Площадь, м²", field: "площадь_м²", width: 145, hozAlign: "right", headerHozAlign: "right",
    sorter: "number",
    formatter: (c) => c.getValue() != null ? Number(c.getValue()).toFixed(1) : ""},
