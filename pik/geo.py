@@ -82,22 +82,43 @@ def derive_city(slug: Optional[str]) -> str:
     return "msk"
 
 
-def extract_block_meta(item: dict, *, slug: Optional[str] = None) -> dict:
-    """Из v2/flat item достать координаты, метро, адрес, дистанцию до центра."""
-    bulk = item.get("bulk") or {}
-    block = item.get("block") or {}
-    stations = item.get("metroStationsServiceNew") or []
+def extract_block_meta(data: dict, *, slug: Optional[str] = None) -> dict:
+    """Из v2/flat-payload (или flat-item) достать координаты, метро, адрес.
+
+    Принимает либо полный response payload `{block: {…}, flats: […]}`, либо
+    единичный flat item (Wayback-формат, где `metroStationsServiceNew` лежит
+    в самом flat).
+    """
+    block = data.get("block") or {}
+    flat = data.get("flats", [{}])[0] if isinstance(data.get("flats"), list) else data
+    bulk = (
+        block.get("bulk")
+        or flat.get("bulk")
+        or data.get("bulk")
+        or {}
+    )
+
+    # current v2 API: block.metroStationsService
+    # legacy / Wayback HTML: flat.metroStationsServiceNew
+    stations = (
+        block.get("metroStationsService")
+        or data.get("metroStationsServiceNew")
+        or flat.get("metroStationsServiceNew")
+        or []
+    )
 
     p = primary_metro(stations)
     p_line = (p or {}).get("line") or {}
 
     lat = (
-        _to_float(bulk.get("latitude"))
-        or _to_float(block.get("latitude"))
+        _to_float(block.get("latitude"))
+        or _to_float(bulk.get("latitude"))
+        or _to_float(flat.get("latitude"))
     )
     lon = (
-        _to_float(bulk.get("longitude"))
-        or _to_float(block.get("longitude"))
+        _to_float(block.get("longitude"))
+        or _to_float(bulk.get("longitude"))
+        or _to_float(flat.get("longitude"))
     )
 
     distance_km = None
@@ -107,16 +128,28 @@ def extract_block_meta(item: dict, *, slug: Optional[str] = None) -> dict:
         distance_km = round(haversine_km(lat, lon, c_lat, c_lon), 1)
 
     floors_max = _to_int(bulk.get("floors"))
+    address = (
+        data.get("address")
+        or flat.get("address")
+        or bulk.get("build_adress")
+    )
+
+    # Fallbacks: block-level time/metro если структура metroStationsService пуста
+    metro_name = (p or {}).get("name") or block.get("metro")
+    time_foot = _to_int((p or {}).get("timeOnFoot") or block.get("timeOnFoot"))
+    time_transport = _to_int(
+        (p or {}).get("timeOnTransport") or block.get("timeOnTransport")
+    )
 
     return {
-        "metro_name":         (p or {}).get("name"),
+        "metro_name":         metro_name,
         "metro_line_name":    p_line.get("name"),
         "metro_line_type":    _to_int(p_line.get("type")),
-        "metro_time_foot":    _to_int((p or {}).get("timeOnFoot")),
-        "metro_time_transport": _to_int((p or {}).get("timeOnTransport")),
+        "metro_time_foot":    time_foot,
+        "metro_time_transport": time_transport,
         "latitude":           lat,
         "longitude":          lon,
-        "address":            item.get("address") or bulk.get("build_adress"),
+        "address":            address,
         "distance_km":        distance_km,
         "floors_max":         floors_max,
     }
