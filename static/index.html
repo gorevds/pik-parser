@@ -109,6 +109,9 @@
 
 <main>
   <div class="controls">
+    <span>Город:</span>
+    <select id="cityFilter"><option value="all">все</option></select>
+    <span style="color:var(--muted);margin-left:8px">|</span>
     <span>ЖК:</span>
     <select id="zkFilter"><option value="all">все</option></select>
     <span style="color:var(--muted);margin-left:8px">|</span>
@@ -172,7 +175,15 @@ const rowFormatter = (row) => {
 const columns = [
   {title: "ID", field: "id", width: 100, hozAlign: "right", headerHozAlign: "right",
    headerFilter: "input", formatter: (c) => String(c.getValue() ?? "")},
-  {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
+  {title: "Город", field: "город", width: 130, headerFilter: "input",
+   formatter: (c) => {
+     const labels = {msk:"Москва", spb:"СПб", ekb:"Екб", kazan:"Казань", nn:"Н.Новгород",
+       yaroslavl:"Ярославль", vladivostok:"Владивосток", khabarovsk:"Хабаровск",
+       "yuzhno-sakhalinsk":"Ю-Сахалинск", "ulan-ude":"Улан-Удэ", blagoveshchensk:"Благовещенск",
+       novorossiisk:"Новороссийск", tyumen:"Тюмень", obninsk:"Обнинск"};
+     return labels[c.getValue()] || c.getValue() || "";
+   }},
+  {title: "ЖК", field: "жк", width: 195, headerFilter: "input"},
   {title: "Комнат", field: "комнат", width: 110, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list",
    headerFilterParams: {values: ["", "студия", "1к", "2к", "3к", "4к"]}},
@@ -218,16 +229,42 @@ const columns = [
 let table;
 let allRows = [];
 let currentRoom = "all";
+let currentCity = "all";
 let currentZk = "all";
 let promoOnly = false;
 
+const CITY_LABELS = {
+  msk: "Москва+МО", spb: "Санкт-Петербург", ekb: "Екатеринбург",
+  kazan: "Казань", nn: "Нижний Новгород", yaroslavl: "Ярославль",
+  vladivostok: "Владивосток", khabarovsk: "Хабаровск",
+  novorossiisk: "Новороссийск", "yuzhno-sakhalinsk": "Южно-Сахалинск",
+  "ulan-ude": "Улан-Удэ", blagoveshchensk: "Благовещенск",
+  tyumen: "Тюмень", obninsk: "Обнинск",
+};
+
 function applyFilter() {
   let rows = allRows;
+  if (currentCity !== "all") rows = rows.filter(r => r["город"] === currentCity);
   if (currentZk !== "all") rows = rows.filter(r => r["жк"] === currentZk);
   if (currentRoom !== "all") rows = rows.filter(r => r["комнат"] === currentRoom);
   if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
   table.replaceData(rows);
   document.getElementById("stats").innerHTML = renderStats(rows);
+  // Rebuild ЖК-dropdown to show only ЖК in the current city filter
+  rebuildZkDropdown(rows);
+}
+
+function rebuildZkDropdown(rows) {
+  const zks = [...new Set(rows.map(r => r["жк"]).filter(Boolean))].sort();
+  const sel = document.getElementById("zkFilter");
+  const prevValue = sel.value;
+  sel.innerHTML = '<option value="all">все</option>';
+  for (const z of zks) {
+    const opt = document.createElement("option");
+    opt.value = z; opt.textContent = z;
+    if (z === prevValue) opt.selected = true;
+    sel.appendChild(opt);
+  }
 }
 
 function renderStats(rows) {
@@ -237,7 +274,9 @@ function renderStats(rows) {
   const min = Math.min(...prices), max = Math.max(...prices);
   const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
   const date = rows[0]["дата_среза"] || "—";
+  const zkCount = new Set(rows.map(r => r["жк"])).size;
   return `
+    <span><b>${zkCount}</b> ЖК</span>
     <span><b>${rows.length}</b> квартир</span>
     <span>цена: <b>${min.toLocaleString("ru-RU")}</b> – <b>${max.toLocaleString("ru-RU")}</b> ₽</span>
     <span>средняя: <b>${avg.toLocaleString("ru-RU")}</b> ₽</span>
@@ -252,15 +291,22 @@ async function load() {
   const rows = await resp.json();
   allRows = rows;
 
-  // Populate ЖК-фильтр
-  const zks = [...new Set(rows.map(r => r["жк"]).filter(Boolean))].sort();
-  const sel = document.getElementById("zkFilter");
-  for (const z of zks) {
+  // Populate city dropdown
+  const cities = [...new Set(rows.map(r => r["город"]).filter(Boolean))].sort();
+  const citySel = document.getElementById("cityFilter");
+  for (const c of cities) {
     const opt = document.createElement("option");
-    opt.value = z; opt.textContent = z;
-    sel.appendChild(opt);
+    opt.value = c; opt.textContent = CITY_LABELS[c] || c;
+    citySel.appendChild(opt);
   }
-  sel.addEventListener("change", (e) => {
+  citySel.addEventListener("change", (e) => {
+    currentCity = e.target.value;
+    currentZk = "all";
+    applyFilter();
+  });
+  // Populate ЖК-фильтр (initially all)
+  rebuildZkDropdown(rows);
+  document.getElementById("zkFilter").addEventListener("change", (e) => {
     currentZk = e.target.value;
     applyFilter();
   });

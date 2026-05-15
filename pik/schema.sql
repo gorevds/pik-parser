@@ -87,6 +87,10 @@ CREATE VIEW today_all AS
 SELECT
     f.id                      AS id,
     COALESCE(b.name, 'block ' || f.block_id) AS жк,
+    CASE
+        WHEN b.slug LIKE '%/%' THEN substr(b.slug, 1, instr(b.slug, '/') - 1)
+        ELSE 'msk'
+    END                       AS город,
     CASE f.rooms
         WHEN 'studio' THEN 'студия'
         WHEN '-1'     THEN 'студия'
