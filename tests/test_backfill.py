@@ -4,8 +4,16 @@ from pik.backfill_wayback import (
     _to_api_v2_shape,
     _wayback_date,
     _wayback_iso,
+    build_urls,
     extract_flats_from_html,
 )
+
+
+def test_build_urls_substitutes_slug():
+    urls = build_urls("foo-bar")
+    assert "https://www.pik.ru/foo-bar" in urls
+    assert "https://www.pik.ru/search/foo-bar/one-room" in urls
+    assert all("foo-bar" in u for u in urls)
 
 
 def test_wayback_timestamp_to_date():
@@ -65,7 +73,7 @@ def test_to_api_v2_shape_converts_wayback_flat_to_api_shape():
         "settlementDate": "2029-03-10T00:00:00+00:00",
         "href": "/flat/980273",
     }
-    api = _to_api_v2_shape(wb_flat)
+    api = _to_api_v2_shape(wb_flat, block_id=1165)
     assert api["id"] == 980273
     assert api["block_id"] == 1165
     assert api["floor"] == 18

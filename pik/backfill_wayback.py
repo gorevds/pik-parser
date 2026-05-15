@@ -29,17 +29,26 @@ NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL
 )
 
-# Сюда грузим. Чем больше — тем больше уникальных квартир (каждая URL даёт свою «страницу 1»).
-NARVIN_URLS = (
-    "https://www.pik.ru/narvin",
-    "https://www.pik.ru/search/narvin",
-    "https://www.pik.ru/search/narvin/one-room",
-    "https://www.pik.ru/search/narvin/two-room",
-    "https://www.pik.ru/search/narvin/three-room",
-    "https://www.pik.ru/search/narvin/studio",
-    "https://www.pik.ru/search/narvin/chessplan",
-    "https://www.pik.ru/search/narvin/one-room/finish",
+# Шаблоны страниц PIK для одного ЖК. Каждая URL даёт свою «страницу 1» из 20 квартир,
+# поэтому больше URL = больше уникальных лотов в исторической выборке.
+_URL_TEMPLATES = (
+    "https://www.pik.ru/{slug}",
+    "https://www.pik.ru/search/{slug}",
+    "https://www.pik.ru/search/{slug}/one-room",
+    "https://www.pik.ru/search/{slug}/two-room",
+    "https://www.pik.ru/search/{slug}/three-room",
+    "https://www.pik.ru/search/{slug}/studio",
+    "https://www.pik.ru/search/{slug}/chessplan",
+    "https://www.pik.ru/search/{slug}/one-room/finish",
 )
+
+
+def build_urls(slug: str) -> tuple[str, ...]:
+    return tuple(t.format(slug=slug) for t in _URL_TEMPLATES)
+
+
+# Обратная совместимость для старого имени.
+NARVIN_URLS = build_urls("narvin")
 
 
 def _make_session(user_agent: str = DEFAULT_UA) -> requests.Session:
@@ -109,13 +118,13 @@ def extract_flats_from_html(html: str) -> list[dict]:
         return []
 
 
-def _to_api_v2_shape(wb_flat: dict) -> dict:
+def _to_api_v2_shape(wb_flat: dict, *, block_id: int) -> dict:
     """Конвертирует formato `filteredFlats.flats` в форму, ожидаемую mapping.to_*."""
     href = wb_flat.get("href")
     return {
         "id": wb_flat["id"],
         "guid": wb_flat["guid"],
-        "block_id": 1165,  # снапшоты только narvin-страниц
+        "block_id": block_id,
         "bulk_id": None,
         "section_id": None,
         "layout_id": None,
@@ -164,7 +173,9 @@ def _wayback_iso(timestamp: str) -> str:
 def backfill(
     db_path: Path,
     *,
-    urls: Iterable[str] = NARVIN_URLS,
+    slug: str,
+    block_id: int,
+    urls: Iterable[str] | None = None,
     from_yyyymmdd: str = "20250601",
     to_yyyymmdd: str = "20260601",
     sleep_sec: float = 1.5,
@@ -176,6 +187,8 @@ def backfill(
     """
     s = session or _make_session()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    if urls is None:
+        urls = build_urls(slug)
 
     all_snaps: list[dict] = []
     for url in urls:
@@ -223,11 +236,11 @@ def backfill(
         date_counts[scan_date] += len(wb_flats)
 
         for wb_flat in wb_flats:
-            if wb_flat.get("blockSlug") and wb_flat["blockSlug"] != "narvin":
-                continue  # на /narvin страницах могут попадаться рекомендации других ЖК
+            if wb_flat.get("blockSlug") and wb_flat["blockSlug"] != slug:
+                continue  # на странице ЖК могут попадаться карточки соседних проектов
             if not wb_flat.get("id"):
                 continue
-            api_shape = _to_api_v2_shape(wb_flat)
+            api_shape = _to_api_v2_shape(wb_flat, block_id=block_id)
             flat_row = to_flat_row(api_shape, first_seen=scan_date)
             snap_row = to_snapshot_row(
                 api_shape, scan_date=scan_date, scan_ts=scan_ts

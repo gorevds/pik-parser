@@ -1,8 +1,13 @@
-"""Однопроходный сканер: api.pik.ru → SQLite."""
+"""Однопроходный сканер: api.pik.ru → SQLite.
+
+По умолчанию сканирует ЖК Нарвин (block_id=1165). Любой другой блок —
+через --block-id или env-var PIK_BLOCK_ID.
+"""
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sqlite3
 import sys
 from datetime import datetime, timezone, timedelta
@@ -14,7 +19,7 @@ from pik.store import apply_schema, upsert
 
 
 MSK = timezone(timedelta(hours=3))
-NARVIN_BLOCK_ID = 1165
+DEFAULT_BLOCK_ID = int(os.environ.get("PIK_BLOCK_ID", 1165))  # Нарвин
 
 
 def _setup_logging() -> None:
@@ -25,7 +30,7 @@ def _setup_logging() -> None:
     )
 
 
-def run_once(db_path: Path, block_id: int = NARVIN_BLOCK_ID) -> int:
+def run_once(db_path: Path, block_id: int) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     log = logging.getLogger("pik.scan")
     client = PikClient()
@@ -47,12 +52,16 @@ def run_once(db_path: Path, block_id: int = NARVIN_BLOCK_ID) -> int:
         upsert(conn, flats=flats, snapshots=snaps)
         one_room = conn.execute(
             "SELECT COUNT(*) FROM flats f JOIN snapshots s ON s.flat_id=f.id "
-            "WHERE s.scan_date=? AND f.rooms='1'",
-            (scan_date,),
+            "WHERE s.scan_date=? AND f.rooms='1' AND f.block_id=?",
+            (scan_date, block_id),
         ).fetchone()[0]
 
-    log.info("stored %d flats; 1-room на витрине: %d", len(items), one_room)
+    log.info("stored %d flats for block %d; 1-room: %d", len(items), block_id, one_room)
     return one_room
+
+
+def _parse_block_ids(raw: str) -> list[int]:
+    return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,17 +75,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--block-id",
-        default=NARVIN_BLOCK_ID,
-        type=int,
-        help="PIK block id (default: 1165 for Narvin)",
+        default=str(DEFAULT_BLOCK_ID),
+        help=(
+            "PIK block id, comma-separated for multiple "
+            "(default: $PIK_BLOCK_ID or 1165 for Narvin)"
+        ),
     )
     args = parser.parse_args(argv)
-    try:
-        run_once(args.db, args.block_id)
-    except PikApiError as exc:
-        logging.error("PIK API error: %s", exc)
-        return 2
-    return 0
+    block_ids = _parse_block_ids(args.block_id)
+    if not block_ids:
+        parser.error("--block-id must contain at least one id")
+    rc = 0
+    for bid in block_ids:
+        try:
+            run_once(args.db, bid)
+        except PikApiError as exc:
+            logging.error("PIK API error for block %d: %s", bid, exc)
+            rc = 2
+    return rc
 
 
 if __name__ == "__main__":
