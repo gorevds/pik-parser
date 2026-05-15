@@ -24,6 +24,16 @@ datasette serve data/pik.db -m metadata.yml --port 5051
 
 Тогда `http://127.0.0.1:5051/pik/today_one_room` — сегодняшняя витрина.
 
+### Ретро-история из Wayback Machine
+
+Одноразово залить ~9 исторических срезов с июня 2025 (Wayback архивы страниц pik.ru/narvin):
+
+```bash
+python -m bin.backfill --db data/pik.db
+```
+
+Это даёт `snapshots` за ~8 прошлых дат + сегодня, ~160 уникальных квартир, история цен 1к за 7 месяцев (рост ~+28% Jun 2025 → Jan 2026).
+
 ## На сервере
 
 DNS A-запись `pik.gorev.space → <server IP>` должна быть. Дальше:
