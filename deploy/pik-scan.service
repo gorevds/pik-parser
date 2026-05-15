@@ -1,0 +1,13 @@
+[Unit]
+Description=PIK Narvin daily price scan
+After=network.target
+
+[Service]
+Type=oneshot
+User=pik
+Group=pik
+WorkingDirectory=/opt/pik
+Environment=TZ=Europe/Moscow
+ExecStart=/opt/pik/venv/bin/python -m bin.scan --db /opt/pik/data/pik.db
+StandardOutput=journal
+StandardError=journal
