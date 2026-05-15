@@ -1,0 +1,27 @@
+title: ЖК Нарвин — цены на 1-комн. квартиры
+description_html: |
+  <p>Ежедневный срез цен PIK по проекту <a href="https://www.pik.ru/narvin">Нарвин</a>.
+  Сегодняшняя витрина — <a href="/pik/today_one_room">today_one_room</a>.
+  Полная история — таблицы <code>flats</code> и <code>snapshots</code>.</p>
+  <p>Источник: <code>api.pik.ru/v2/flat?block_id=1165&amp;types=1</code>.
+  Скан раз в сутки в 06:00 МСК. Цены могут отличаться от сайта PIK на пару часов.</p>
+license: ODbL
+license_url: https://opendatacommons.org/licenses/odbl/
+source: api.pik.ru
+source_url: https://www.pik.ru/narvin
+databases:
+  pik:
+    tables:
+      flats:
+        description: Стабильные характеристики квартир (этаж, площадь, корпус)
+      snapshots:
+        description: Ежедневный срез — цены, статус, отделка, лучшая ипотека
+        sort_desc: scan_date
+    queries:
+      price_history:
+        title: История цены конкретной квартиры
+        sql: |-
+          SELECT scan_date, price, meter_price, status
+          FROM snapshots
+          WHERE flat_id = :flat_id
+          ORDER BY scan_date
