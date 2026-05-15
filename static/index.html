@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ЖК Нарвин — цены ПИК</title>
+<title>Цены ПИК — снимки по дням</title>
 <link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_modern.min.css" rel="stylesheet">
 <style>
   :root {
@@ -96,7 +96,7 @@
 <body>
 
 <header>
-  <h1>ЖК Нарвин — квартиры</h1>
+  <h1>Цены ПИК — снимки по дням</h1>
   <div class="stats" id="stats">загрузка…</div>
   <div style="margin-left:auto">
     <a href="/pik/today_all" target="_blank">сырые данные</a>
@@ -109,6 +109,9 @@
 
 <main>
   <div class="controls">
+    <span>ЖК:</span>
+    <select id="zkFilter"><option value="all">все</option></select>
+    <span style="color:var(--muted);margin-left:8px">|</span>
     <span>Комнат:</span>
     <button data-rooms="all" class="active">все</button>
     <button data-rooms="студия">студии</button>
@@ -169,6 +172,7 @@ const rowFormatter = (row) => {
 const columns = [
   {title: "ID", field: "id", width: 100, hozAlign: "right", headerHozAlign: "right",
    headerFilter: "input", formatter: (c) => String(c.getValue() ?? "")},
+  {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
   {title: "Комнат", field: "комнат", width: 110, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list",
    headerFilterParams: {values: ["", "студия", "1к", "2к", "3к", "4к"]}},
@@ -214,10 +218,12 @@ const columns = [
 let table;
 let allRows = [];
 let currentRoom = "all";
+let currentZk = "all";
 let promoOnly = false;
 
 function applyFilter() {
   let rows = allRows;
+  if (currentZk !== "all") rows = rows.filter(r => r["жк"] === currentZk);
   if (currentRoom !== "all") rows = rows.filter(r => r["комнат"] === currentRoom);
   if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
   table.replaceData(rows);
@@ -244,6 +250,19 @@ async function load() {
   const resp = await fetch("/pik/today_all.json?_shape=array&_size=max");
   const rows = await resp.json();
   allRows = rows;
+
+  // Populate ЖК-фильтр
+  const zks = [...new Set(rows.map(r => r["жк"]).filter(Boolean))].sort();
+  const sel = document.getElementById("zkFilter");
+  for (const z of zks) {
+    const opt = document.createElement("option");
+    opt.value = z; opt.textContent = z;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener("change", (e) => {
+    currentZk = e.target.value;
+    applyFilter();
+  });
 
   table = new Tabulator("#grid", {
     data: rows,

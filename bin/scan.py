@@ -46,17 +46,32 @@ def run_once(db_path: Path, block_id: int) -> int:
     flats = [to_flat_row(it, first_seen=scan_date) for it in items]
     snaps = [to_snapshot_row(it, scan_date=scan_date, scan_ts=scan_ts) for it in items]
 
+    # Имя ЖК берём из первого item.block.name (или fallback)
+    block_name = None
+    if items:
+        b = items[0].get("block")
+        if isinstance(b, dict):
+            block_name = b.get("name")
+
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         apply_schema(conn)
         upsert(conn, flats=flats, snapshots=snaps)
+        if block_name:
+            conn.execute(
+                "INSERT INTO blocks (id, name, slug, updated_at) VALUES (?, ?, NULL, ?) "
+                "ON CONFLICT (id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
+                (block_id, block_name, scan_ts),
+            )
+            conn.commit()
         one_room = conn.execute(
             "SELECT COUNT(*) FROM flats f JOIN snapshots s ON s.flat_id=f.id "
             "WHERE s.scan_date=? AND f.rooms='1' AND f.block_id=?",
             (scan_date, block_id),
         ).fetchone()[0]
 
-    log.info("stored %d flats for block %d; 1-room: %d", len(items), block_id, one_room)
+    log.info("stored %d flats for block %d (%s); 1-room: %d",
+             len(items), block_id, block_name or "?", one_room)
     return one_room
 
 

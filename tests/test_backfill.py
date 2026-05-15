@@ -12,7 +12,7 @@ from pik.backfill_wayback import (
 def test_build_urls_substitutes_slug():
     urls = build_urls("foo-bar")
     assert "https://www.pik.ru/foo-bar" in urls
-    assert "https://www.pik.ru/search/foo-bar/one-room" in urls
+    assert "https://www.pik.ru/search/foo-bar" in urls
     assert all("foo-bar" in u for u in urls)
 
 

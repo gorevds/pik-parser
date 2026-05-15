@@ -29,22 +29,22 @@ NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL
 )
 
-# Шаблоны страниц PIK для одного ЖК. Каждая URL даёт свою «страницу 1» из 20 квартир,
-# поэтому больше URL = больше уникальных лотов в исторической выборке.
-_URL_TEMPLATES = (
+# Корневые префиксы: каждая отдельная URL даёт свою «страницу 1» (20 квартир);
+# используя CDX matchType=prefix мы захватим и фильтрованные варианты
+# (?metroStations=, /one-room, /studio, /finish, и т.п.) — каждый со своей выборкой.
+_URL_PREFIXES = (
     "https://www.pik.ru/{slug}",
     "https://www.pik.ru/search/{slug}",
-    "https://www.pik.ru/search/{slug}/one-room",
-    "https://www.pik.ru/search/{slug}/two-room",
-    "https://www.pik.ru/search/{slug}/three-room",
-    "https://www.pik.ru/search/{slug}/studio",
-    "https://www.pik.ru/search/{slug}/chessplan",
-    "https://www.pik.ru/search/{slug}/one-room/finish",
 )
 
 
 def build_urls(slug: str) -> tuple[str, ...]:
-    return tuple(t.format(slug=slug) for t in _URL_TEMPLATES)
+    """Conv для обратной совместимости — возвращает корневые URL без фильтров."""
+    return tuple(p.format(slug=slug) for p in _URL_PREFIXES)
+
+
+def build_url_prefixes(slug: str) -> tuple[str, ...]:
+    return tuple(p.format(slug=slug) for p in _URL_PREFIXES)
 
 
 # Обратная совместимость для старого имени.
@@ -65,18 +65,28 @@ def list_snapshots(
     *,
     from_yyyymmdd: str = "20250601",
     to_yyyymmdd: str = "20260601",
+    match_type: str = "prefix",
     session: requests.Session | None = None,
 ) -> list[dict]:
-    """Список Wayback-снимков (timestamp, original_url) для одного URL."""
+    """Список Wayback-снимков (timestamp, original_url) для одного URL.
+
+    match_type:
+      - 'exact'  — только snapshot ровно этого URL
+      - 'prefix' — все URL начинающиеся с этого, включая фильтрованные варианты
+                   (?metroStations=, /one-room, /studio, …) — даёт больше уникальных
+                   «первых страниц», то есть больше уникальных лотов в истории
+    """
     s = session or _make_session()
+    # Намеренно НЕ используем CDX `collapse=urlkey` или `collapse=timestamp:8`:
+    # они сжимают данные до того как мы увидим (url, date) пары. Дедупим в Python,
+    # это даёт максимальное число уникальных (url, date) сочетаний.
     params = {
         "url": url,
-        "matchType": "exact",
+        "matchType": match_type,
         "output": "json",
         "filter": "statuscode:200",
         "from": from_yyyymmdd,
         "to": to_yyyymmdd,
-        "collapse": "timestamp:8",
     }
     r = s.get(CDX_API, params=params, timeout=30)
     r.raise_for_status()
@@ -187,19 +197,26 @@ def backfill(
     """
     s = session or _make_session()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    # По умолчанию: корневые префиксы + matchType=prefix (CDX сам найдёт
+    # фильтрованные подURL'ы). Если urls передали явно — используем их с exact.
     if urls is None:
-        urls = build_urls(slug)
+        urls = build_url_prefixes(slug)
+        match_type = "prefix"
+    else:
+        urls = tuple(urls)
+        match_type = "exact"
 
     all_snaps: list[dict] = []
     for url in urls:
         try:
             snaps = list_snapshots(
-                url, from_yyyymmdd=from_yyyymmdd, to_yyyymmdd=to_yyyymmdd, session=s
+                url, from_yyyymmdd=from_yyyymmdd, to_yyyymmdd=to_yyyymmdd,
+                match_type=match_type, session=s,
             )
         except requests.HTTPError as exc:
             log.warning("CDX for %s failed: %s", url, exc)
             continue
-        log.info("CDX %s -> %d snapshots", url, len(snaps))
+        log.info("CDX %s (match=%s) -> %d snapshots", url, match_type, len(snaps))
         all_snaps.extend(snaps)
 
     # Дедуп по (date, original_url) — в один день несколько снимков одной страницы

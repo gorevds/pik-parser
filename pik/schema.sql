@@ -1,3 +1,11 @@
+-- Справочник ЖК: id (PIK block_id) → имя/url, для UI и мульти-проектной витрины
+CREATE TABLE IF NOT EXISTS blocks (
+    id    INTEGER PRIMARY KEY,
+    name  TEXT NOT NULL,
+    slug  TEXT,
+    updated_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS flats (
     id              INTEGER PRIMARY KEY,
     guid            TEXT NOT NULL,
@@ -51,11 +59,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS idx_snap_date  ON snapshots(scan_date);
 CREATE INDEX IF NOT EXISTS idx_flat_rooms ON flats(rooms);
 
--- Сегодняшний срез: ВСЕ квартиры со всеми ценами (база + с программой)
+-- Сегодняшний срез: ВСЕ квартиры со всеми ценами (база + с программой) +
+-- по всем ЖК. Колонка `жк` = название проекта из блока (если зарегистрирован).
 DROP VIEW IF EXISTS today_all;
 CREATE VIEW today_all AS
 SELECT
     f.id                      AS id,
+    COALESCE(b.name, 'block ' || f.block_id) AS жк,
     CASE f.rooms
         WHEN 'studio' THEN 'студия'
         WHEN '-1'     THEN 'студия'
@@ -78,10 +88,17 @@ SELECT
     f.name                    AS артикул,
     f.url                     AS ссылка,
     f.plan_url                AS планировка,
-    s.scan_date               AS дата_среза
+    s.scan_date               AS дата_среза,
+    f.block_id                AS block_id
 FROM flats f
 JOIN snapshots s ON s.flat_id = f.id
-WHERE s.scan_date = (SELECT MAX(scan_date) FROM snapshots);
+LEFT JOIN blocks b ON b.id = f.block_id
+WHERE s.scan_date = (
+    SELECT MAX(s2.scan_date)
+    FROM snapshots s2
+    JOIN flats f2 ON f2.id = s2.flat_id
+    WHERE f2.block_id = f.block_id
+);
 
 -- Обратная совместимость: тот же набор колонок, но только 1-к
 DROP VIEW IF EXISTS today_one_room;
