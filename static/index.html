@@ -201,6 +201,12 @@ const columns = [
   {title: "Статус", field: "статус", width: 115, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list",
    headerFilterParams: {values: ["", "free", "reserve", "sold"]}},
+  {title: "График", field: "id", hozAlign: "center", headerHozAlign: "center",
+   width: 95, headerSort: false,
+   formatter: (c) => {
+     const id = c.getValue();
+     return id ? `<a href="/flat.html?id=${id}" target="_blank" rel="noopener">📈 история</a>` : "";
+   }},
   {title: "PIK", field: "ссылка", width: 90, hozAlign: "center", headerHozAlign: "center",
    formatter: fmtLink, headerSort: false},
 ];
