@@ -114,12 +114,7 @@ SELECT
 FROM flats f
 JOIN snapshots s ON s.flat_id = f.id
 LEFT JOIN blocks b ON b.id = f.block_id
-WHERE s.scan_date = (
-    SELECT MAX(s2.scan_date)
-    FROM snapshots s2
-    JOIN flats f2 ON f2.id = s2.flat_id
-    WHERE f2.block_id = f.block_id
-);
+WHERE s.scan_date = (SELECT MAX(scan_date) FROM snapshots);
 
 -- Обратная совместимость: тот же набор колонок, но только 1-к
 DROP VIEW IF EXISTS today_one_room;

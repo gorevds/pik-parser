@@ -247,7 +247,8 @@ function renderStats(rows) {
 }
 
 async function load() {
-  const resp = await fetch("/pik/today_all.json?_shape=array&_size=max");
+  const resp = await fetch("/pik/today_all.json?_shape=array&_size=2000");
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const rows = await resp.json();
   allRows = rows;
 
@@ -275,7 +276,7 @@ async function load() {
     persistence: false,
   });
 
-  applyFilter();
+  table.on("tableBuilt", () => applyFilter());
 
   document.querySelectorAll(".controls button[data-rooms]").forEach((btn) => {
     btn.addEventListener("click", () => {
