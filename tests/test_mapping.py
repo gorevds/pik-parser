@@ -30,6 +30,19 @@ def test_to_flat_row_extracts_stable_fields():
     assert row["area_kitchen"] == FIXTURE["areaKitchen"]
     assert row["area_living"] == FIXTURE["areaLiving"]
     assert row["ceiling_height"] == FIXTURE["ceilingHeight"]
+    # settlement_date prefers top-level, falls back to bulk.settlement_date
+    expected_settle = FIXTURE.get("settlementDate") or FIXTURE["bulk"]["settlement_date"]
+    assert row["settlement_date"] == expected_settle
+
+
+def test_to_flat_row_settlement_date_falls_back_to_bulk():
+    item = {
+        "id": 1, "guid": "g", "block_id": 1165, "rooms": 1,
+        "bulk": {"name": "K", "settlement_date": "2029-03-10"},
+        "section": {}, "layout": {},
+    }
+    row = to_flat_row(item, first_seen="2026-05-15")
+    assert row["settlement_date"] == "2029-03-10"
 
 
 def test_to_snapshot_row_extracts_volatile_fields():

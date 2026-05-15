@@ -82,7 +82,7 @@ def to_flat_row(item: dict, *, first_seen: str) -> dict:
         "pdf_url":         item.get("pdf"),
         "plan_url":        plan_url,
         "ceiling_height":  item.get("ceilingHeight"),
-        "settlement_date": item.get("settlementDate") or item.get("rveDateFact") or None,
+        "settlement_date": item.get("settlementDate") or bulk.get("settlement_date") or None,
         "first_seen":      first_seen,
     }
 
