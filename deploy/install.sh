@@ -42,17 +42,21 @@ systemctl enable --now pik.service
 systemctl enable --now pik-scan.timer
 systemctl status pik.service --no-pager | head -10
 
-# 7. Nginx (HTTP-only до certbot)
-install -m 644 "$APP_DIR/deploy/nginx-pik.gorev.space.conf" /etc/nginx/sites-available/pik.gorev.space
+# 7. Nginx — двухшаговая раскатка для первичного выпуска TLS-сертификата
 ln -sf /etc/nginx/sites-available/pik.gorev.space /etc/nginx/sites-enabled/pik.gorev.space
 
 if [ ! -e /etc/letsencrypt/live/pik.gorev.space/fullchain.pem ]; then
-  echo ">>> TLS-сертификат не найден. Запустите вручную:"
-  echo "    certbot --nginx -d pik.gorev.space"
-  echo ">>> Затем: nginx -t && systemctl reload nginx"
-  exit 0
+  echo ">>> TLS-сертификат не найден — ставим HTTP-only и зовём certbot."
+  install -m 644 "$APP_DIR/deploy/nginx-pik.gorev.space-http.conf" /etc/nginx/sites-available/pik.gorev.space
+  mkdir -p /var/www/certbot
+  nginx -t
+  systemctl reload nginx
+
+  certbot certonly --webroot -w /var/www/certbot -d pik.gorev.space \
+    --non-interactive --agree-tos --email "${LETSENCRYPT_EMAIL:-oscar@dolotov.com}"
 fi
 
+install -m 644 "$APP_DIR/deploy/nginx-pik.gorev.space.conf" /etc/nginx/sites-available/pik.gorev.space
 nginx -t
 systemctl reload nginx
 echo ">>> Готово. Откройте https://pik.gorev.space"
