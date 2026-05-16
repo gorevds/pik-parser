@@ -91,6 +91,58 @@
   }
   .controls button:hover { border-color: var(--accent); color: var(--accent); }
   .controls button.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .controls input[type="number"] {
+    width: 70px;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cols-wrap { position: relative; }
+  .cols-panel {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.08);
+    max-height: 60vh;
+    overflow-y: auto;
+    z-index: 100;
+    min-width: 220px;
+  }
+  .cols-panel.open { display: block; }
+  .cols-panel label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .cols-panel .cols-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .cols-panel .cols-actions button {
+    flex: 1;
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+  .metro-type {
+    display: inline-block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-right: 4px;
+  }
 </style>
 </head>
 <body>
@@ -122,7 +174,17 @@
     <button data-rooms="2к">2к</button>
     <button data-rooms="3к">3к</button>
     <span style="color:var(--muted);margin-left:8px">|</span>
+    <span>Площадь:</span>
+    <input type="number" id="areaMin" placeholder="от" step="1" min="0">
+    <span style="color:var(--muted)">—</span>
+    <input type="number" id="areaMax" placeholder="до" step="1" min="0">
+    <span style="color:var(--muted)">м²</span>
+    <span style="color:var(--muted);margin-left:8px">|</span>
     <label><input type="checkbox" id="promoOnly"> только со скидкой</label>
+    <span style="margin-left:auto" class="cols-wrap">
+      <button id="colsBtn" type="button">⚙ Колонки</button>
+      <div id="colsPanel" class="cols-panel"></div>
+    </span>
   </div>
   <div id="grid"></div>
 </main>
@@ -191,9 +253,9 @@ const columns = [
      if (!name) return "";
      const type = r["тип_транспорта"];
      const t = r["мин_пешком"];
-     const badge = type ? `<span style="background:${type==='M'?'#ef4444':type==='МЦК'?'#fbbf24':type==='МЦД'?'#3b82f6':'#6b7280'};color:white;border-radius:3px;padding:1px 4px;font-size:10px;margin-right:4px">${type}</span>` : '';
+     const typeMark = type && type !== "M" ? `<span class="metro-type">${type}</span>` : '';
      const time = t ? ` <span style="color:var(--muted)">· ${t} мин</span>` : '';
-     return `${badge}${name}${time}`;
+     return `${typeMark}${name}${time}`;
    }},
   {title: "Линия", field: "линия", width: 165, headerFilter: "input"},
   {title: "Км от центра", field: "км_от_центра", width: 130, hozAlign: "right", headerHozAlign: "right",
@@ -254,6 +316,10 @@ let currentRoom = "all";
 let currentCity = "all";
 let currentZk = "all";
 let promoOnly = false;
+let areaMin = null;
+let areaMax = null;
+const COLS_LS_KEY = "pik:hidden_cols:v1";
+const hiddenCols = new Set(JSON.parse(localStorage.getItem(COLS_LS_KEY) || "[]"));
 
 const CITY_LABELS = {
   msk: "Москва+МО", spb: "Санкт-Петербург", ekb: "Екатеринбург",
@@ -270,10 +336,74 @@ function applyFilter() {
   if (currentZk !== "all") rows = rows.filter(r => r["жк"] === currentZk);
   if (currentRoom !== "all") rows = rows.filter(r => r["комнат"] === currentRoom);
   if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
+  if (areaMin != null) rows = rows.filter(r => r["площадь_м²"] != null && r["площадь_м²"] >= areaMin);
+  if (areaMax != null) rows = rows.filter(r => r["площадь_м²"] != null && r["площадь_м²"] <= areaMax);
   table.replaceData(rows);
   document.getElementById("stats").innerHTML = renderStats(rows);
   // Rebuild ЖК-dropdown to show only ЖК in the current city filter
   rebuildZkDropdown(rows);
+}
+
+function buildColsPanel() {
+  const panel = document.getElementById("colsPanel");
+  panel.innerHTML = "";
+  const seen = new Set();
+  columns.forEach((col, idx) => {
+    const field = col.field;
+    const title = col.title || field;
+    if (!field) return;
+    // дубликат поля (id используется в "ID" и в "График") — отличаем по индексу
+    const key = `${field}__${idx}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const wrap = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !hiddenCols.has(key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) hiddenCols.delete(key);
+      else hiddenCols.add(key);
+      localStorage.setItem(COLS_LS_KEY, JSON.stringify([...hiddenCols]));
+      applyColumnVisibility();
+    });
+    wrap.appendChild(cb);
+    const txt = document.createElement("span");
+    txt.textContent = title || "(без названия)";
+    wrap.appendChild(txt);
+    wrap.dataset.colKey = key;
+    panel.appendChild(wrap);
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "cols-actions";
+  const showAll = document.createElement("button");
+  showAll.type = "button"; showAll.textContent = "Показать все";
+  showAll.addEventListener("click", () => {
+    hiddenCols.clear();
+    localStorage.setItem(COLS_LS_KEY, "[]");
+    panel.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+    applyColumnVisibility();
+  });
+  actions.appendChild(showAll);
+  panel.appendChild(actions);
+}
+
+function applyColumnVisibility() {
+  if (!table) return;
+  const seen = new Set();
+  columns.forEach((col, idx) => {
+    const field = col.field;
+    if (!field) return;
+    const key = `${field}__${idx}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const tcols = table.getColumns();
+    // ищем колонку по совпадению field+title (защита от дублей field)
+    const match = tcols.find(c => c.getField() === field && (c.getDefinition().title || "") === (col.title || ""));
+    if (!match) return;
+    if (hiddenCols.has(key)) match.hide();
+    else match.show();
+  });
 }
 
 function rebuildZkDropdown(rows) {
@@ -344,19 +474,49 @@ async function load() {
     persistence: false,
   });
 
-  table.on("tableBuilt", () => applyFilter());
+  table.on("tableBuilt", () => {
+    applyColumnVisibility();
+    applyFilter();
+  });
 
   document.querySelectorAll(".controls button[data-rooms]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".controls button[data-rooms]").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentRoom = btn.dataset.rooms;
+      const clicked = btn.dataset.rooms;
+      // Повторный клик по активной не-"all" кнопке сбрасывает фильтр
+      const nextRoom = (clicked !== "all" && currentRoom === clicked) ? "all" : clicked;
+      document.querySelectorAll(".controls button[data-rooms]").forEach(b => {
+        b.classList.toggle("active", b.dataset.rooms === nextRoom);
+      });
+      currentRoom = nextRoom;
       applyFilter();
     });
   });
   document.getElementById("promoOnly").addEventListener("change", (e) => {
     promoOnly = e.target.checked;
     applyFilter();
+  });
+
+  const onAreaChange = () => {
+    const minV = document.getElementById("areaMin").value.trim();
+    const maxV = document.getElementById("areaMax").value.trim();
+    areaMin = minV === "" ? null : Number(minV);
+    areaMax = maxV === "" ? null : Number(maxV);
+    applyFilter();
+  };
+  document.getElementById("areaMin").addEventListener("input", onAreaChange);
+  document.getElementById("areaMax").addEventListener("input", onAreaChange);
+
+  buildColsPanel();
+  const colsBtn = document.getElementById("colsBtn");
+  const colsPanel = document.getElementById("colsPanel");
+  colsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    colsPanel.classList.toggle("open");
+  });
+  document.addEventListener("click", (e) => {
+    if (!colsPanel.contains(e.target) && e.target !== colsBtn) {
+      colsPanel.classList.remove("open");
+    }
   });
 
   const last = rows[0]?.["дата_среза"] || "—";
