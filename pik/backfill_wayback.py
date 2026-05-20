@@ -271,6 +271,9 @@ def backfill(
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
+        # backfill часто запускают по нескольким ЖК параллельно — ждём
+        # освобождения write-лока вместо мгновенного "database is locked".
+        conn.execute("PRAGMA busy_timeout=30000")
         apply_schema(conn)
         upsert(
             conn,

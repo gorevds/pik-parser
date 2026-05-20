@@ -1,5 +1,7 @@
 import json
+import sqlite3
 
+from bin.backfill import _blocks_with_slug, _run_all_blocks
 from pik.backfill_wayback import (
     _to_api_v2_shape,
     _wayback_date,
@@ -7,6 +9,40 @@ from pik.backfill_wayback import (
     build_urls,
     extract_flats_from_html,
 )
+from pik.blocks_meta import upsert_block_meta
+from pik.store import apply_schema
+
+
+def test_blocks_with_slug_skips_missing_file(tmp_path):
+    assert _blocks_with_slug(tmp_path / "nope.db") == []
+
+
+def test_blocks_with_slug_filters_null_and_blank(tmp_path):
+    db = tmp_path / "pik.db"
+    conn = sqlite3.connect(db)
+    apply_schema(conn)
+    upsert_block_meta(conn, block_id=1, name="A", slug="narvin", meta={}, scan_ts="t")
+    upsert_block_meta(conn, block_id=2, name="B", slug=None, meta={}, scan_ts="t")
+    upsert_block_meta(conn, block_id=3, name="C", slug="  ", meta={}, scan_ts="t")
+    upsert_block_meta(
+        conn, block_id=4, name="D", slug="kazan/siberovo", meta={}, scan_ts="t"
+    )
+    conn.close()
+    assert _blocks_with_slug(db) == [(1, "narvin"), (4, "kazan/siberovo")]
+
+
+def test_run_all_blocks_counts_failures(tmp_path, monkeypatch):
+    def fake_backfill(db_path, *, slug, block_id, **kw):
+        if block_id == 2:
+            raise RuntimeError("boom")
+        return {"snapshots": 5, "unique_flats": 3, "dates": 2, "errors": 0}
+
+    monkeypatch.setattr("bin.backfill.backfill", fake_backfill)
+    bad = _run_all_blocks(
+        tmp_path / "x.db", [(1, "a"), (2, "b"), (3, "c")],
+        from_date="20250601", to_date="20260601", sleep=0, workers=3,
+    )
+    assert bad == 1
 
 
 def test_build_urls_substitutes_slug():
