@@ -34,14 +34,10 @@ def _setup_logging() -> None:
     )
 
 
-def run_once(db_path: Path, block_id: int) -> int:
+def run_once(db_path: Path, block_id: int, *, scan_date: str, scan_ts: str) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     log = logging.getLogger("pik.scan")
     client = PikClient()
-
-    now = datetime.now(MSK)
-    scan_date = now.strftime("%Y-%m-%d")
-    scan_ts = now.isoformat(timespec="seconds")
 
     log.info("scanning block_id=%s scan_date=%s", block_id, scan_date)
     items = client.fetch_block_flats(block_id=block_id, types=(1,))
@@ -125,11 +121,16 @@ def main(argv: list[str] | None = None) -> int:
         if not block_ids:
             parser.error("--block-id must contain at least one id")
     log = logging.getLogger("pik.scan")
+    # Единая дата/время на весь обход: иначе ЖК, отсканированные до и после
+    # полуночи, получат разный scan_date и попадут в разные срезы.
+    now = datetime.now(MSK)
+    scan_date = now.strftime("%Y-%m-%d")
+    scan_ts = now.isoformat(timespec="seconds")
     rc = 0
     started = time.monotonic()
     for bid in block_ids:
         try:
-            run_once(args.db, bid)
+            run_once(args.db, bid, scan_date=scan_date, scan_ts=scan_ts)
         except PikApiError as exc:
             logging.error("PIK API error for block %d: %s", bid, exc)
             rc = 2
