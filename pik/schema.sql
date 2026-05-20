@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_snap_date  ON snapshots(scan_date);
 CREATE INDEX IF NOT EXISTS idx_flat_rooms ON flats(rooms);
+CREATE INDEX IF NOT EXISTS idx_flat_block ON flats(block_id);
 
 -- Агрегированная история из не-PIK источников: Cian, mskguru, новости и т.п.
 -- Для каждой строки — на какую дату относится цена и какой ЖК.
@@ -91,10 +92,18 @@ CREATE TABLE IF NOT EXISTS history_aggregated (
 
 CREATE INDEX IF NOT EXISTS idx_hist_block_date ON history_aggregated(block_id, date);
 
--- Сегодняшний срез: ВСЕ квартиры со всеми ценами (база + с программой) +
--- по всем ЖК. Колонка `жк` = название проекта из блока (если зарегистрирован).
+-- Свежий срез: ВСЕ квартиры со всеми ценами (база + с программой) по всем ЖК.
+-- Для каждого ЖК берётся ЕГО последний скан (а не глобальный максимум по всей
+-- таблице) — иначе ЖК, отсканированный раньше других, целиком исчезает из
+-- витрины. Колонка `жк` = название проекта из блока (если зарегистрирован).
 DROP VIEW IF EXISTS today_all;
 CREATE VIEW today_all AS
+WITH block_latest AS (
+    SELECT f.block_id AS block_id, MAX(s.scan_date) AS scan_date
+    FROM snapshots s
+    JOIN flats f ON f.id = s.flat_id
+    GROUP BY f.block_id
+)
 SELECT
     f.id                      AS id,
     COALESCE(b.name, 'block ' || f.block_id) AS жк,
@@ -141,8 +150,8 @@ SELECT
     f.block_id                AS block_id
 FROM flats f
 JOIN snapshots s ON s.flat_id = f.id
-LEFT JOIN blocks b ON b.id = f.block_id
-WHERE s.scan_date = (SELECT MAX(scan_date) FROM snapshots);
+JOIN block_latest bl ON bl.block_id = f.block_id AND bl.scan_date = s.scan_date
+LEFT JOIN blocks b ON b.id = f.block_id;
 
 -- Обратная совместимость: тот же набор колонок, но только 1-к
 DROP VIEW IF EXISTS today_one_room;

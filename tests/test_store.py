@@ -76,6 +76,33 @@ def test_today_view_returns_latest_only(conn):
     assert rows == [(11_900_000,)]
 
 
+def test_today_view_shows_each_block_at_its_own_latest(conn):
+    """Каждый ЖК показывается на свой последний скан, не на глобальный max.
+
+    ЖК, отсканированный раньше другого, не должен исчезать из витрины.
+    """
+    apply_schema(conn)
+    # block 1165: отсканирован 2026-05-15 и 2026-05-20
+    upsert(conn, flats=[SAMPLE_FLAT], snapshots=[SAMPLE_SNAPSHOT])
+    upsert(
+        conn, flats=[SAMPLE_FLAT],
+        snapshots=[dict(SAMPLE_SNAPSHOT, scan_date="2026-05-20", price=13_000_000)],
+    )
+    # block 999: отсканирован только 2026-05-15 (раньше глобального max)
+    flat_b = dict(SAMPLE_FLAT, id=200, guid="g-200", block_id=999)
+    snap_b = dict(SAMPLE_SNAPSHOT, flat_id=200, price=9_000_000)
+    upsert(conn, flats=[flat_b], snapshots=[snap_b])
+
+    rows = {
+        bid: (date, price)
+        for bid, date, price in conn.execute(
+            "SELECT block_id, дата_среза, базовая_цена FROM today_all"
+        )
+    }
+    assert rows[1165] == ("2026-05-20", 13_000_000)
+    assert rows[999] == ("2026-05-15", 9_000_000)  # не исчез, хоть скан и старше
+
+
 def test_apply_schema_migrates_old_db_adding_promo_columns(conn):
     """БД из 0.1.0 (без promo-колонок) не должна крашить apply_schema."""
     conn.executescript(
