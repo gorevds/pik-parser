@@ -22,6 +22,10 @@ def _migrate_snapshots(conn: sqlite3.Connection) -> None:
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
+    # WAL: писатель (скан) и читатели (Datasette) не блокируют друг друга.
+    # Режим персистентен в файле БД. Для :memory: PRAGMA молча остаётся
+    # 'memory' — исключения не будет.
+    conn.execute("PRAGMA journal_mode=WAL")
     _migrate_snapshots(conn)
     sql = files("pik").joinpath("schema.sql").read_text(encoding="utf-8")
     conn.executescript(sql)
