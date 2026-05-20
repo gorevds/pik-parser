@@ -1,7 +1,8 @@
 """Однопроходный сканер: api.pik.ru → SQLite.
 
 По умолчанию сканирует ЖК Нарвин (block_id=1165). Любой другой блок —
-через --block-id или env-var PIK_BLOCK_ID.
+через --block-id или env-var PIK_BLOCK_ID. Флаг --all-blocks обходит все
+ЖК, уже известные базе (таблица blocks).
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -83,6 +85,14 @@ def _parse_block_ids(raw: str) -> list[int]:
     return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
 
+def _block_ids_from_db(db_path: Path) -> list[int]:
+    if not db_path.exists():
+        return []
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT id FROM blocks ORDER BY id").fetchall()
+    return [r[0] for r in rows]
+
+
 def main(argv: list[str] | None = None) -> int:
     _setup_logging()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -100,17 +110,32 @@ def main(argv: list[str] | None = None) -> int:
             "(default: $PIK_BLOCK_ID or 1165 for Narvin)"
         ),
     )
+    parser.add_argument(
+        "--all-blocks",
+        action="store_true",
+        help="Scan every block already known to the DB (ignores --block-id)",
+    )
     args = parser.parse_args(argv)
-    block_ids = _parse_block_ids(args.block_id)
-    if not block_ids:
-        parser.error("--block-id must contain at least one id")
+    if args.all_blocks:
+        block_ids = _block_ids_from_db(args.db)
+        if not block_ids:
+            parser.error("--all-blocks: no blocks in DB yet, scan one first")
+    else:
+        block_ids = _parse_block_ids(args.block_id)
+        if not block_ids:
+            parser.error("--block-id must contain at least one id")
+    log = logging.getLogger("pik.scan")
     rc = 0
+    started = time.monotonic()
     for bid in block_ids:
         try:
             run_once(args.db, bid)
         except PikApiError as exc:
             logging.error("PIK API error for block %d: %s", bid, exc)
             rc = 2
+    elapsed = time.monotonic() - started
+    log.info("sweep done: %d block(s) in %.0f s (%.1f min)",
+             len(block_ids), elapsed, elapsed / 60)
     return rc
 
 
