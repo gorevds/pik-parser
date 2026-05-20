@@ -29,8 +29,6 @@ def merge_databases(
 
     flat_select = f"SELECT {', '.join(_FLAT_COLS)} FROM src.flats"
     snap_select = f"SELECT {', '.join(_SNAP_COLS)} FROM src.snapshots"
-    flat_dict = ", ".join(_FLAT_COLS)
-    snap_dict = ", ".join(_SNAP_COLS)
 
     summary: dict[str, dict] = {}
     for src in source_paths:
@@ -38,25 +36,23 @@ def merge_databases(
         if not src.exists():
             log.warning("source %s not found, skipping", src)
             continue
-        conn.execute(f"ATTACH DATABASE '{src}' AS src")
+        # Путь — связанный параметр (не f-string): защита от кавычек/инъекции.
+        conn.execute("ATTACH DATABASE ? AS src", (str(src),))
         try:
             cur = conn.cursor()
             cur.execute("BEGIN")
             try:
-                # Превратим row → dict для использования existing INSERT строк
-                conn.row_factory = sqlite3.Row
-                src_cur = conn.cursor()
-
-                src_cur.execute(flat_select)
-                flat_rows = [dict(r) for r in src_cur.fetchall()]
+                # tuple → dict через известный порядок колонок: не трогаем
+                # conn.row_factory (его мутация на всё соединение хрупка).
+                cur.execute(flat_select)
+                flat_rows = [dict(zip(_FLAT_COLS, r)) for r in cur.fetchall()]
                 cur.executemany(_FLATS_INSERT, flat_rows)
 
-                src_cur.execute(snap_select)
-                snap_rows = [dict(r) for r in src_cur.fetchall()]
+                cur.execute(snap_select)
+                snap_rows = [dict(zip(_SNAP_COLS, r)) for r in cur.fetchall()]
                 cur.executemany(_SNAP_INSERT, snap_rows)
 
                 conn.commit()
-                conn.row_factory = None
 
                 # post-merge stats
                 summary[str(src)] = {
