@@ -213,7 +213,10 @@ def backfill(
                 url, from_yyyymmdd=from_yyyymmdd, to_yyyymmdd=to_yyyymmdd,
                 match_type=match_type, session=s,
             )
-        except requests.HTTPError as exc:
+        except requests.RequestException as exc:
+            # не только HTTP-ошибки: Wayback может отказать в соединении
+            # или тайм-аутить под нагрузкой — один сбойный префикс не должен
+            # ронять весь ЖК.
             log.warning("CDX for %s failed: %s", url, exc)
             continue
         log.info("CDX %s (match=%s) -> %d snapshots", url, match_type, len(snaps))
@@ -255,8 +258,8 @@ def backfill(
         for wb_flat in wb_flats:
             if wb_flat.get("blockSlug") and wb_flat["blockSlug"] != slug:
                 continue  # на странице ЖК могут попадаться карточки соседних проектов
-            if not wb_flat.get("id"):
-                continue
+            if not wb_flat.get("id") or not wb_flat.get("guid"):
+                continue  # битая карточка из архива — id/guid обязательны
             api_shape = _to_api_v2_shape(wb_flat, block_id=block_id)
             flat_row = to_flat_row(api_shape, first_seen=scan_date)
             snap_row = to_snapshot_row(
