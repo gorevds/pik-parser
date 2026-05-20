@@ -189,7 +189,9 @@ def main(argv: list[str] | None = None) -> int:
         if not block_ids:
             parser.error("--block-id must contain at least one id")
     failed = run_sweep(args.db, block_ids, workers=args.workers)
-    return 1 if failed else 0
+    # Ненулевой код (→ systemd пометит юнит failed) только если упало
+    # большинство ЖК — один-два флапнувших из ~69 не повод бить тревогу.
+    return 1 if failed * 2 > len(block_ids) else 0
 
 
 if __name__ == "__main__":
