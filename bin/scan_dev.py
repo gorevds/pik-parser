@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from pik.blocks_meta import upsert_block_meta
-from pik.sources import fsk
+from pik.sources import donstroy, fsk
 from pik.sources.base import CollectResult, SourceError, build_rows
 from pik.store import apply_schema, upsert
 
@@ -29,6 +29,7 @@ MSK = timezone(timedelta(hours=3))
 # Реестр источников: имя застройщика → функция обхода.
 SOURCES: dict[str, Callable[[], CollectResult]] = {
     fsk.DEVELOPER: fsk.collect,
+    donstroy.DEVELOPER: donstroy.collect,
 }
 
 

@@ -177,3 +177,58 @@ def test_fsk_rows_apply_to_schema(monkeypatch):
     ).fetchone()
     assert row == ("ГК ФСК", "Архитектор")
     conn.close()
+
+
+# --- donstroy -----------------------------------------------------------
+
+from pik.sources import donstroy  # noqa: E402
+
+
+def test_donstroy_slug_from_link():
+    assert donstroy._slug_from_link("/objects/simvol/plans/quarter7/") == "simvol"
+    assert donstroy._slug_from_link(None) is None
+    assert donstroy._slug_from_link("/other/path/") is None
+
+
+def test_donstroy_to_float_handles_comma_and_junk():
+    assert donstroy._to_float("28.4") == 28.4
+    assert donstroy._to_float("28,4") == 28.4
+    assert donstroy._to_float(None) is None
+    assert donstroy._to_float("") is None
+
+
+def test_donstroy_to_norm_maps_real_fixture():
+    fl = json.load(open(FIXTURES / "donstroy_flats.json"))[0]
+    norm = donstroy._to_norm(fl)
+    assert norm.native_id == "10-39-1-260139017"
+    assert norm.native_block_id == "Символ"
+    assert norm.rooms == 0  # студия
+    assert norm.area == 28.4
+    assert norm.price == 19_125_696
+    assert norm.old_price == 20_788_800  # price_old > price
+    assert norm.bulk_name == "Корпус 39"
+    assert norm.section_no == 1
+    assert norm.url == "https://donstroy.moscow/objects/simvol/plans/" \
+        "quarter7/korpus39/section1/floor4/flat260139017/"
+
+
+def test_donstroy_to_norm_hides_price_on_request():
+    norm = donstroy._to_norm({"id": "x", "project": "P", "price": 999,
+                              "price_request": True})
+    assert norm.price is None
+
+
+def test_donstroy_collect_paginates_and_dedups_blocks(monkeypatch):
+    fixture = json.load(open(FIXTURES / "donstroy_flats.json"))
+    full = fixture[:1] * donstroy._PAGE_SIZE  # полная страница → пагинация продолжится
+    pages = {1: full, 2: fixture[:1]}         # стр.2 короткая → стоп
+
+    def fake_request_json(session, method, url, *, json=None, **kw):
+        return {"flats": pages.get(json["page"], [])}
+
+    monkeypatch.setattr("pik.sources.donstroy.request_json", fake_request_json)
+    result = donstroy.collect()
+    # стр.1 — 12 квартир (полная), стр.2 — 1 (короткая, стоп) → 13 квартир
+    assert len(result.flats) == donstroy._PAGE_SIZE + 1
+    # один ЖК на все карточки — блок без дублей
+    assert {b.name for b in result.blocks} == {"Символ"}
