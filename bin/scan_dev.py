@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from pik.blocks_meta import upsert_block_meta
+from pik.developers import DEVELOPERS
 from pik.sources import a101, absolut, donstroy, fsk, level, mrgroup
 from pik.sources.base import CollectResult, SourceError, build_rows
 from pik.store import apply_schema, upsert
@@ -37,6 +38,13 @@ SOURCES: dict[str, Callable[[], CollectResult]] = {
     absolut.DEVELOPER: absolut.collect,
     mrgroup.DEVELOPER: mrgroup.collect,
 }
+
+# Имя каждого источника обязано быть в реестре pik.developers — иначе
+# build_rows → namespaced_id упадёт лишь в проде. Ловим опечатку при импорте.
+_UNKNOWN_SOURCES = set(SOURCES) - set(DEVELOPERS)
+assert not _UNKNOWN_SOURCES, (
+    f"источники вне реестра застройщиков pik.developers: {_UNKNOWN_SOURCES}"
+)
 
 
 def _ensure_schema(db_path: Path) -> None:
@@ -161,7 +169,10 @@ def main(argv: list[str] | None = None) -> int:
         scan_ts=now.isoformat(timespec="seconds"),
         workers=args.workers,
     )
-    return 1 if failed * 2 > len(developers) else 0
+    # Источников всего ~6, и сбой одного — это потеря данных по целому
+    # застройщику за день. В отличие от bin/scan.py (десятки ЖК ПИК, где
+    # один флапнувший — не беда) здесь любой сбой обязан пометить юнит failed.
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

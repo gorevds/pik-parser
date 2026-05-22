@@ -59,15 +59,24 @@ def test_main_rejects_unknown_developer(tmp_path):
         scan_dev.main(["--db", str(tmp_path / "x.db"), "--developer", "Неведомый"])
 
 
-def test_main_tolerates_minority_failures(tmp_path, monkeypatch):
+def test_main_succeeds_when_all_developers_ok(tmp_path, monkeypatch):
+    monkeypatch.setattr(scan_dev, "run_sweep", lambda *a, **k: 0)
+    monkeypatch.setattr(scan_dev, "SOURCES", dict.fromkeys("abcde"))
+    rc = scan_dev.main(["--db", str(tmp_path / "x.db"), "--all"])
+    assert rc == 0
+
+
+def test_main_fails_on_any_developer_failure(tmp_path, monkeypatch):
+    # источников мало — сбой даже одного это потеря данных по застройщику
+    # за сутки, юнит обязан стать failed
     monkeypatch.setattr(scan_dev, "run_sweep", lambda *a, **k: 1)
     monkeypatch.setattr(scan_dev, "SOURCES", dict.fromkeys("abcde"))
     rc = scan_dev.main(["--db", str(tmp_path / "x.db"), "--all"])
-    assert rc == 0  # 1 из 5 — не повод валить юнит
-
-
-def test_main_fails_on_majority_failures(tmp_path, monkeypatch):
-    monkeypatch.setattr(scan_dev, "run_sweep", lambda *a, **k: 3)
-    monkeypatch.setattr(scan_dev, "SOURCES", dict.fromkeys("abcde"))
-    rc = scan_dev.main(["--db", str(tmp_path / "x.db"), "--all"])
     assert rc == 1
+
+
+def test_sources_registry_within_developer_registry():
+    """Каждый источник обязан быть зарегистрирован в pik.developers."""
+    from pik.developers import DEVELOPERS
+
+    assert set(scan_dev.SOURCES) <= set(DEVELOPERS)
