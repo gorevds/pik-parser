@@ -6,7 +6,7 @@
 таблицы blocks/flats/snapshots с глобально-уникальными id.
 
   python -m bin.scan_dev --db data/pik.db --developer "ГК ФСК"
-  python -m bin.scan_dev --db data/pik.db --all
+  python -m bin.scan_dev --db data/pik.db --all          # все застройщики параллельно
 """
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ import argparse
 import logging
 import sqlite3
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -37,23 +39,38 @@ SOURCES: dict[str, Callable[[], CollectResult]] = {
 }
 
 
+def _ensure_schema(db_path: Path) -> None:
+    """Создаёт/мигрирует схему один раз — до параллельной записи застройщиков.
+
+    DDL под конкурентной записью лучше не гонять: применяем схему заранее,
+    дальше потоки только пишут строки (WAL + busy_timeout это выдерживают).
+    """
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        apply_schema(conn)
+    finally:
+        conn.close()
+
+
 def run_developer(
     db_path: Path, developer: str, *, scan_date: str, scan_ts: str
 ) -> tuple[int, int]:
-    """Обойти одного застройщика и записать результат. → (n_blocks, n_flats)."""
+    """Обойти одного застройщика и записать результат. → (n_blocks, n_flats).
+
+    Схема должна быть уже применена (_ensure_schema). Соединение своё —
+    функция безопасна для запуска в отдельном потоке.
+    """
     log = logging.getLogger("pik.scan_dev")
-    collect = SOURCES[developer]
-    result = collect()
+    result = SOURCES[developer]()
     block_payloads, flat_rows, snap_rows = build_rows(
         developer, result, scan_date=scan_date, scan_ts=scan_ts
     )
 
-    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout=30000")
-        apply_schema(conn)
         for bp in block_payloads:
             upsert_block_meta(
                 conn, block_id=bp["block_id"], name=bp["name"],
@@ -69,13 +86,46 @@ def run_developer(
     return len(block_payloads), len(flat_rows)
 
 
+def run_sweep(
+    db_path: Path, developers: list[str], *, scan_date: str, scan_ts: str,
+    workers: int,
+) -> int:
+    """Параллельно обходит застройщиков. Возвращает число упавших источников."""
+    log = logging.getLogger("pik.scan_dev")
+    _ensure_schema(db_path)
+    n_workers = max(1, min(workers, len(developers)))
+    failed = 0
+    started = time.monotonic()
+
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
+        futures = {
+            ex.submit(run_developer, db_path, dev,
+                      scan_date=scan_date, scan_ts=scan_ts): dev
+            for dev in developers
+        }
+        for fut in as_completed(futures):
+            dev = futures[fut]
+            try:
+                fut.result()
+            except SourceError as exc:
+                log.error("%s: источник недоступен: %s", dev, exc)
+                failed += 1
+            except Exception:
+                log.exception("%s: непредвиденный сбой", dev)
+                failed += 1
+
+    elapsed = time.monotonic() - started
+    log.info("обход завершён: %d застройщик(ов), %d воркер(ов), %d сбой(ев), "
+             "за %.0f с", len(developers), n_workers, failed, elapsed)
+    return failed
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S%z",
     )
-    log = logging.getLogger("pik.scan_dev")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default="data/pik.db", type=Path)
     parser.add_argument(
@@ -84,7 +134,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--all", action="store_true",
-        help="Обойти всех застройщиков из реестра",
+        help="Обойти всех застройщиков из реестра (параллельно)",
+    )
+    parser.add_argument(
+        "--workers", type=int, default=6,
+        help="Число параллельных воркеров для --all (default: 6)",
     )
     args = parser.parse_args(argv)
 
@@ -101,20 +155,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("укажите --developer NAME или --all")
 
     now = datetime.now(MSK)
-    scan_date = now.strftime("%Y-%m-%d")
-    scan_ts = now.isoformat(timespec="seconds")
-
-    failed = 0
-    for dev in developers:
-        try:
-            run_developer(args.db, dev, scan_date=scan_date, scan_ts=scan_ts)
-        except SourceError as exc:
-            log.error("%s: источник недоступен: %s", dev, exc)
-            failed += 1
-        except Exception:
-            log.exception("%s: непредвиденный сбой", dev)
-            failed += 1
-
+    failed = run_sweep(
+        args.db, developers,
+        scan_date=now.strftime("%Y-%m-%d"),
+        scan_ts=now.isoformat(timespec="seconds"),
+        workers=args.workers,
+    )
     return 1 if failed * 2 > len(developers) else 0
 
 
