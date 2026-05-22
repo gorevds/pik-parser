@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from pik.client import PikClient, PikApiError
+from pik.developers import ID_NAMESPACE
 from pik.mapping import to_flat_row, to_snapshot_row
 from pik.store import apply_schema, upsert
 from pik.geo import extract_block_meta
@@ -144,10 +145,19 @@ def _parse_block_ids(raw: str) -> list[int]:
 
 
 def _block_ids_from_db(db_path: Path) -> list[int]:
+    """ID всех ЖК ПИК из базы.
+
+    БД теперь общая: не-ПИК застройщики живут в тех же таблицах, но в своих
+    диапазонах id (offset*ID_NAMESPACE, offset>=1). ПИК имеет offset 0, его
+    block_id всегда < ID_NAMESPACE. Фильтр обязателен — иначе --all-blocks
+    скормил бы чужие id (напр. 4_000_000_001_234) в api.pik.ru.
+    """
     if not db_path.exists():
         return []
     with sqlite3.connect(db_path) as conn:
-        rows = conn.execute("SELECT id FROM blocks ORDER BY id").fetchall()
+        rows = conn.execute(
+            "SELECT id FROM blocks WHERE id < ? ORDER BY id", (ID_NAMESPACE,)
+        ).fetchall()
     return [r[0] for r in rows]
 
 
