@@ -281,3 +281,91 @@ def test_a101_collect_follows_next_pagination(monkeypatch):
     assert len(calls) == 2  # прошли по `next`
     assert len(result.flats) == 2
     assert {b.slug for b in result.blocks} == {"rodniye-kvartaly", "other"}
+
+
+# --- level --------------------------------------------------------------
+
+from pik.sources import level  # noqa: E402
+
+
+def test_level_settlement_formats_quarter_and_year():
+    assert level._settlement({"completion_year": 2026, "completion_quarter": 1}) \
+        == "1 кв. 2026"
+    assert level._settlement({"completion_year": 2027}) == "2027"
+    assert level._settlement({}) is None
+
+
+def test_level_to_norm_maps_real_fixture():
+    fl = json.load(open(FIXTURES / "level_flats.json"))["results"][0]
+    norm = level._to_norm(fl)
+    assert norm.native_id == 58772
+    assert norm.native_block_id == "bauman"
+    assert norm.rooms == 5
+    assert norm.price == 65_097_637
+    assert norm.old_price == 81_372_046  # old_price float > price → int
+    assert norm.meter_price == 339_580
+    assert norm.bulk_name == "Корпус B"
+    assert norm.status == "free"  # status 1
+    assert norm.url == "https://level.ru/bauman/apartment/5room/2-N1/"
+    assert norm.finish == "Без отделки"
+
+
+# --- absolut ------------------------------------------------------------
+
+from pik.sources import absolut  # noqa: E402
+
+
+def test_absolut_round_price():
+    assert absolut._round_price(8611351.88) == 8_611_352
+    assert absolut._round_price(None) is None
+
+
+def test_absolut_settlement():
+    assert absolut._settlement({"completionYear": 2028, "completionQuarter": "I"}) \
+        == "I кв. 2028"
+    assert absolut._settlement({}) is None
+
+
+def test_absolut_to_norm_maps_real_fixture():
+    node = json.load(open(FIXTURES / "absolut_flats.json"))[
+        "data"]["allFlats"]["edges"][0]["node"]
+    norm = absolut._to_norm(node)
+    assert norm.native_id == "4fe60a95-da39-11ef-9436-9c8e99fc8634"
+    assert norm.native_block_id == "peredelkino-blizhnee"
+    assert norm.rooms == 0
+    assert norm.price == 8_611_352      # дробная цена округлена
+    assert norm.old_price is None       # hasDiscount=false → без старой цены
+    assert norm.bulk_name == "Корпус 2"
+    assert norm.section_no == 4
+    assert norm.floor == 1
+    assert norm.settlement_date == "I кв. 2028"
+    assert norm.finish == "Без отделки"  # facing=false
+
+
+def test_absolut_old_price_only_when_has_discount():
+    node = {"pk": "x", "project": {"slug": "p"}, "price": 8_000_000.0,
+            "originPrice": 10_000_000.0, "hasDiscount": True,
+            "building": {}, "section": {}, "floor": {}}
+    norm = absolut._to_norm(node)
+    assert norm.old_price == 10_000_000
+
+
+def test_absolut_collect_cursor_pagination(monkeypatch):
+    node = json.load(open(FIXTURES / "absolut_flats.json"))[
+        "data"]["allFlats"]["edges"][0]["node"]
+    pages = [
+        {"data": {"allFlats": {"edges": [{"node": node}],
+         "pageInfo": {"endCursor": "c1", "hasNextPage": True}}}},
+        {"data": {"allFlats": {"edges": [{"node": {**node, "pk": "p2"}}],
+         "pageInfo": {"endCursor": "c2", "hasNextPage": False}}}},
+    ]
+    seen_after = []
+
+    def fake_request_json(session, method, url, *, json=None, **kw):
+        seen_after.append(json["variables"]["after"])
+        return pages[len(seen_after) - 1]
+
+    monkeypatch.setattr("pik.sources.absolut.request_json", fake_request_json)
+    result = absolut.collect()
+    assert seen_after == [None, "c1"]  # курсор передаётся на 2-ю страницу
+    assert len(result.flats) == 2
