@@ -18,7 +18,13 @@ from html import unescape
 
 import requests
 
-from pik.sources.base import CollectResult, NormBlock, NormFlat, SourceError
+from pik.sources.base import (
+    CollectResult,
+    NormBlock,
+    NormFlat,
+    SourceError,
+    request_text,
+)
 
 
 DEVELOPER = "MR Group"
@@ -64,6 +70,15 @@ def _num(raw: str) -> float | None:
         return None
 
 
+def _building_name(raw: str) -> str:
+    """«Клиф 5 от Сити Бэй» → «Клиф 5».
+
+    К имени корпуса на сайте местами дописано « от <ЖК>» — это часть названия
+    ЖК, не корпуса; отрезаем, иначе один корпус двоился бы по bulk_name.
+    """
+    return raw.split(" от ")[0].strip()
+
+
 def _card_text(card_html: str) -> str:
     # HTML хранит разделители разрядов как сущность &nbsp; — раскодируем
     # её (и прочие сущности), затем сводим всё к обычным пробелам.
@@ -98,7 +113,7 @@ def _parse_card(href: str, text: str, block_slug: str) -> NormFlat | None:
         meter_price=round(_num(ppm_m.group(1))) if ppm_m else None,
         old_price=old_price,
         status="free",
-        bulk_name=bld_m.group(1).strip() if bld_m else None,
+        bulk_name=_building_name(bld_m.group(1)) if bld_m else None,
         settlement_date=settle_m.group(1).strip() if settle_m else None,
         url=_SITE + href + "/",
         number=code.rsplit("-", 1)[-1],
@@ -118,11 +133,10 @@ def parse_flats_page(html: str, block_slug: str) -> list[NormFlat]:
 
 
 def _fetch_page(session: requests.Session, slug: str) -> str:
+    # через request_text: ServicePipe отдаёт 403/5xx спорадически — ретрай
+    # с паузой часто проходит, иначе один флап ронял бы весь ЖК на сутки.
     url = f"{_SITE}/flats/zhk-{slug}/"
-    resp = session.get(url, timeout=40)
-    if resp.status_code != 200:
-        raise SourceError(f"HTTP {resp.status_code} for {url}")
-    return resp.text
+    return request_text(session, "GET", url)
 
 
 def collect(

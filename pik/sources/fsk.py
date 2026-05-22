@@ -41,6 +41,17 @@ def _finish_label(fl: dict) -> str | None:
     return "С отделкой и мебелью" if fl.get("furniture") else "С отделкой"
 
 
+def _status_label(raw) -> str | None:
+    """API отдаёт только продающиеся квартиры (status 0).
+
+    Прочее на всякий случай сохраняем как есть; отсутствующий статус — None,
+    а не строка «None» (иначе в snapshots осел бы мусорный литерал).
+    """
+    if raw == 0:
+        return "free"
+    return None if raw is None else str(raw)
+
+
 def _to_norm(fl: dict, block_slug: str) -> NormFlat:
     price = fl.get("price")
     wo_discount = fl.get("priceWoDiscount")
@@ -57,8 +68,7 @@ def _to_norm(fl: dict, block_slug: str) -> NormFlat:
         price=price,
         meter_price=fl.get("pricePerMeter"),
         old_price=old_price,
-        # API отдаёт только продающиеся квартиры (status 0)
-        status="free" if fl.get("status") == 0 else str(fl.get("status")),
+        status=_status_label(fl.get("status")),
         bulk_name=(f"Корпус {corpus['number']}" if corpus.get("number") else None),
         section_no=_to_int(section.get("number")),
         settlement_date=corpus.get("dateDelivery"),

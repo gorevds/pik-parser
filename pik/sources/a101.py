@@ -67,7 +67,11 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     blocks: dict[str, str] = {}  # slug → project name
 
     url: str | None = _FLATS_URL
-    params: dict | None = {"limit": _PAGE_LIMIT, "offset": 0, "order": "actual_price"}
+    # Без явного `order`: сортировка по умолчанию у API детерминирована и
+    # привязана к неизменному ключу. Сортировать по `actual_price` нельзя —
+    # цена меняется, и квартиры «переезжали» бы через границу offset между
+    # запросами страниц (часть терялась бы или дублировалась за один скан).
+    params: dict | None = {"limit": _PAGE_LIMIT, "offset": 0}
     for _ in range(_MAX_PAGES):
         payload = request_json(s, "GET", url, params=params)
         params = None  # `next` уже содержит limit/offset

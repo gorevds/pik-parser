@@ -92,6 +92,14 @@ def to_global_id(developer: str, native: int | str) -> int:
         else:
             n = stable_int_id(s)
     if not 0 <= n < ID_NAMESPACE:
+        # числовой id вне диапазона [0, ID_NAMESPACE) — обычно симптом ошибки
+        # парсинга выше по стеку (отрицательный sentinel, лишний разряд).
+        # Квартиру не теряем — хешируем, но логируем: split_id() для такого
+        # id уже необратим.
+        log.warning(
+            "%s: числовой native id %r вне [0, %d) — заменён хешем",
+            developer, native, ID_NAMESPACE,
+        )
         n = stable_int_id(str(native))
     return namespaced_id(developer, n)
 
@@ -141,6 +149,7 @@ def build_rows(
     flat_rows: list[dict] = []
     snap_rows: list[dict] = []
     seen_ids: set[int] = set()
+    dup_natives: list[int | str] = []
     skipped_noid = skipped_orphan = skipped_dup = 0
     for f in result.flats:
         if f.native_id is None or f.native_block_id is None:
@@ -156,6 +165,7 @@ def build_rows(
         # коллизия id (теоретически — хеш строковых id) затёрла бы соседа
         if gid in seen_ids:
             skipped_dup += 1
+            dup_natives.append(f.native_id)
             continue
         seen_ids.add(gid)
         area = f.area
@@ -217,6 +227,12 @@ def build_rows(
             "%s: пропущено квартир — без id: %d, без ЖК: %d, дубль id: %d",
             developer, skipped_noid, skipped_orphan, skipped_dup,
         )
+        if dup_natives:
+            # дубль — либо источник вернул один id дважды (безвредно), либо
+            # хеш двух РАЗНЫХ строковых ключей совпал (тогда это потеря
+            # квартиры). native id в логе позволяет различить эти случаи.
+            log.warning("%s: native id с конфликтом global id: %s",
+                        developer, dup_natives)
     return block_payloads, flat_rows, snap_rows
 
 
@@ -266,3 +282,39 @@ def request_json(
         if attempt < retries:
             time.sleep(backoff(attempt))
     raise SourceError(f"{method} {url} failed after {retries + 1} attempts: {last_exc}")
+
+
+def request_text(
+    session: requests.Session,
+    method: str,
+    url: str,
+    *,
+    retries: int = 3,
+    timeout: float = 40.0,
+    retry_status: tuple[int, ...] = _RETRYABLE_STATUS + (403,),
+    backoff: Callable[[int], float] = _backoff,
+    **kwargs: Any,
+) -> str:
+    """HTTP-запрос с ретраями, возвращает тело ответа как текст.
+
+    Для HTML-источников. В отличие от request_json к ретраябельным статусам
+    добавлен 403: анти-боты (ServicePipe и пр.) отдают его спорадически, и
+    повтор с паузой часто проходит.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            resp = session.request(method, url, timeout=timeout, **kwargs)
+        except requests.RequestException as exc:
+            last_exc = exc
+        else:
+            if resp.status_code == 200:
+                return resp.text
+            last_exc = SourceError(f"HTTP {resp.status_code} for {url}")
+            if resp.status_code not in retry_status:
+                raise last_exc
+        if attempt < retries:
+            time.sleep(backoff(attempt))
+    raise SourceError(
+        f"{method} {url} failed after {retries + 1} attempts: {last_exc}"
+    )

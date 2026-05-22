@@ -96,6 +96,7 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     for _ in range(_MAX_PAGES):
         payload = request_json(
             s, "POST", _GRAPHQL_URL,
+            timeout=60.0,  # GraphQL-страница на 100 квартир отвечает небыстро
             json={
                 "operationName": "allFlats",
                 "query": _ALL_FLATS_QUERY,

@@ -43,6 +43,19 @@ def test_to_global_id_developers_never_collide():
     assert len(gids) == 4
 
 
+def test_to_global_id_rehashes_out_of_range_numeric(caplog):
+    """Числовой id вне [0, ID_NAMESPACE) хешируется — и это логируется."""
+    from pik.developers import split_id
+
+    huge = ID_NAMESPACE + 7
+    with caplog.at_level("WARNING"):
+        gid = to_global_id("Донстрой", huge)
+    assert "вне" in caplog.text  # замена не прошла молча
+    dev, native = split_id(gid)
+    assert dev == "Донстрой"
+    assert 0 <= native < ID_NAMESPACE
+
+
 # --- base._detect_discount ---------------------------------------------
 
 def test_detect_discount_none_when_no_old_price():
@@ -159,6 +172,19 @@ def test_fsk_to_norm_maps_real_fixture():
     assert norm.floor == 27
     assert norm.status == "free"  # status 0
     assert norm.old_price is None  # priceWoDiscount == price
+
+
+def test_fsk_to_norm_detects_discount():
+    base = {"externalId": 1, "price": 9_000_000, "areaTotal": 50.0, "rooms": 2}
+    with_disc = fsk._to_norm({**base, "priceWoDiscount": 10_000_000}, "z")
+    assert with_disc.old_price == 10_000_000
+    no_disc = fsk._to_norm({**base, "priceWoDiscount": 9_000_000}, "z")
+    assert no_disc.old_price is None
+
+
+def test_fsk_status_missing_is_none_not_string():
+    norm = fsk._to_norm({"externalId": 1, "price": 1, "areaTotal": 1.0}, "z")
+    assert norm.status is None  # не мусорный литерал "None"
 
 
 def test_fsk_collect_with_mocked_api(monkeypatch):
@@ -437,6 +463,14 @@ def test_mrgroup_parse_card_extracts_all_fields():
     assert f.bulk_name == "Норс 7"
     assert f.settlement_date == "I кв. 2027"
     assert f.url == "https://www.mr-group.ru/catalog/apartments/sb-3-7-k-1-24-6-72406/"
+
+
+def test_mrgroup_building_name_strips_zhk_suffix():
+    # к имени корпуса на сайте местами дописано « от <ЖК>» — должно отрезаться
+    text = ("Сити Бэй -7% 1-комнатная, 38,85 м² 22 388 264 ₽ "
+            "576 789 ₽/м² 24 073 403 ₽ Клиф 5 от Сити Бэй 12/20 этаж")
+    f = mrgroup._parse_card("/catalog/apartments/x-1/", text, "citybay")
+    assert f.bulk_name == "Клиф 5"
 
 
 def test_mrgroup_parse_card_studio():
