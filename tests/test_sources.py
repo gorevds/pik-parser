@@ -369,3 +369,61 @@ def test_absolut_collect_cursor_pagination(monkeypatch):
     result = absolut.collect()
     assert seen_after == [None, "c1"]  # курсор передаётся на 2-ю страницу
     assert len(result.flats) == 2
+
+
+# --- mrgroup ------------------------------------------------------------
+
+from pik.sources import mrgroup  # noqa: E402
+
+
+def test_mrgroup_num_parses_spaced_decimal():
+    assert mrgroup._num("53 945 211,17") == 53945211.17
+    assert mrgroup._num("424\xa0632") == 424632.0
+    assert mrgroup._num("junk") is None
+
+
+def test_mrgroup_card_text_decodes_nbsp_entities():
+    text = mrgroup._card_text("<div>53&nbsp;945&nbsp;211&nbsp;₽</div>")
+    assert text == "53 945 211 ₽"
+
+
+def test_mrgroup_parse_card_extracts_all_fields():
+    text = ("Сити Бэй -10% MR Base 4-комнатная, 127,04 м² "
+            "53 945 211,17 ₽ 424 632 ₽/м² 59 939 124 ₽ Норс 7 "
+            "24/26 этаж I кв. 2027 Консультация")
+    f = mrgroup._parse_card("/catalog/apartments/sb-3-7-k-1-24-6-72406/",
+                            text, "citybay")
+    assert f.native_id == "sb-3-7-k-1-24-6-72406"
+    assert f.native_block_id == "citybay"
+    assert f.rooms == 4
+    assert f.area == 127.04
+    assert f.floor == 24
+    assert f.price == 53_945_211
+    assert f.meter_price == 424_632
+    assert f.old_price == 59_939_124
+    assert f.bulk_name == "Норс 7"
+    assert f.settlement_date == "I кв. 2027"
+    assert f.url == "https://www.mr-group.ru/catalog/apartments/sb-3-7-k-1-24-6-72406/"
+
+
+def test_mrgroup_parse_card_studio():
+    f = mrgroup._parse_card("/catalog/apartments/x-1/",
+                            "Студия, 25,0 м² 10 000 000 ₽", "mod")
+    assert f.rooms == 0
+
+
+def test_mrgroup_parse_card_returns_none_without_price():
+    assert mrgroup._parse_card("/catalog/apartments/x-1/",
+                               "2-комнатная, 50 м²", "mod") is None
+
+
+def test_mrgroup_parse_flats_page_on_real_fixture():
+    html = open(FIXTURES / "mrgroup_citybay.html", encoding="utf-8").read()
+    flats = mrgroup.parse_flats_page(html, "citybay")
+    assert len(flats) == 48
+    # все карточки полные: цена, площадь, комнатность
+    assert all(f.price and f.area and f.rooms is not None for f in flats)
+
+
+def test_mrgroup_parse_flats_page_empty_on_antibot_stub():
+    assert mrgroup.parse_flats_page("<html><body>challenge</body></html>", "x") == []

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from pik.blocks_meta import upsert_block_meta
-from pik.sources import a101, absolut, donstroy, fsk, level
+from pik.sources import a101, absolut, donstroy, fsk, level, mrgroup
 from pik.sources.base import CollectResult, SourceError, build_rows
 from pik.store import apply_schema, upsert
 
@@ -33,6 +33,7 @@ SOURCES: dict[str, Callable[[], CollectResult]] = {
     a101.DEVELOPER: a101.collect,
     level.DEVELOPER: level.collect,
     absolut.DEVELOPER: absolut.collect,
+    mrgroup.DEVELOPER: mrgroup.collect,
 }
 
 
