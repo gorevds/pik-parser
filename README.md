@@ -1,23 +1,38 @@
 # pik-parser
 
-Ежедневный снимок цен и параметров квартир любого ЖК девелопера ПИК → SQLite
+Ежедневный снимок цен и параметров квартир застройщиков Москвы → SQLite
 → публичная фильтруемая витрина через Datasette.
 
-По умолчанию настроен на **ЖК «Нарвин»** (`block_id=1165`), но это просто
-default. Любой другой проект ПИК поднимается одной командой.
+Изначально — только ПИК (по умолчанию **ЖК «Нарвин»**, `block_id=1165`),
+теперь покрывает топ застройщиков: ПИК, ГК ФСК, Донстрой, А101, Level,
+Абсолют, MR Group. Все они лежат в одной БД с разрезом по застройщику.
 
-Живая витрина для Нарвина: **https://pik.gorev.space**
+Живая витрина: **https://pik.gorev.space**
 
 ## Что внутри
 
 - `pik/client.py` — пагинированный клиент к `api.pik.ru/v2/flat` с retry на 502/503/504
-- `pik/mapping.py` — нормализует JSON → строки SQLite (`flats` + `snapshots`)
+- `pik/mapping.py` — нормализует JSON ПИК → строки SQLite (`flats` + `snapshots`)
 - `pik/store.py` — схема и идемпотентный upsert в одной транзакции
+- `pik/developers.py` — реестр застройщиков + неймспейсинг id (общее id-пространство)
+- `pik/sources/` — по модулю на застройщика (ФСК/Донстрой/А101/Level/Абсолют/MR Group),
+  каждый приводит свой API/HTML к нормализованным `NormBlock`/`NormFlat`
 - `pik/backfill_wayback.py` — ретро-история из архивов pik.ru через web.archive.org
-- `bin/scan.py` — однопроходный сканер (cron-friendly)
+- `bin/scan.py` — однопроходный сканер ПИК (cron-friendly)
+- `bin/scan_dev.py` — параллельный сканер прочих застройщиков
 - `bin/backfill.py` — одноразовая заливка истории
 - `metadata.yml` — конфиг Datasette
-- `deploy/` — systemd unit + nginx + install.sh
+- `deploy/` — systemd units + nginx + install.sh
+
+### Застройщики кроме ПИК
+
+```bash
+python -m bin.scan_dev --db data/pik.db --all          # все источники параллельно
+python -m bin.scan_dev --db data/pik.db --developer "ГК ФСК"
+```
+
+Самолёт и ЛСР пока не поддержаны: сайт Самолёта за QRATOR-JS-челленджем
+(нужен headless-браузер), сайт ЛСР отдаёт данные только с российских IP.
 
 ## Локальный quick start
 

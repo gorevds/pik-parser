@@ -28,14 +28,18 @@ sudo -u "$SVC_USER" "$APP_DIR/venv/bin/pip" install --upgrade pip
 sudo -u "$SVC_USER" "$APP_DIR/venv/bin/pip" install -e "$APP_DIR[serve]"
 
 # 4. systemd
-install -m 644 "$APP_DIR/deploy/pik.service"      /etc/systemd/system/pik.service
-install -m 644 "$APP_DIR/deploy/pik-scan.service" /etc/systemd/system/pik-scan.service
-install -m 644 "$APP_DIR/deploy/pik-scan.timer"   /etc/systemd/system/pik-scan.timer
+install -m 644 "$APP_DIR/deploy/pik.service"          /etc/systemd/system/pik.service
+install -m 644 "$APP_DIR/deploy/pik-scan.service"     /etc/systemd/system/pik-scan.service
+install -m 644 "$APP_DIR/deploy/pik-scan.timer"       /etc/systemd/system/pik-scan.timer
+install -m 644 "$APP_DIR/deploy/pik-scan-dev.service" /etc/systemd/system/pik-scan-dev.service
+install -m 644 "$APP_DIR/deploy/pik-scan-dev.timer"   /etc/systemd/system/pik-scan-dev.timer
 systemctl daemon-reload
 
-# 5. Первый прогон скана (обновляет схему + наполняет БД)
+# 5. Первый прогон сканов (обновляет схему + наполняет БД)
 systemctl start pik-scan.service
 journalctl -u pik-scan.service --no-pager | tail -20
+systemctl start pik-scan-dev.service
+journalctl -u pik-scan-dev.service --no-pager | tail -20
 
 # Перезапуск Datasette после изменения схемы (он держит соединение с pik.db)
 systemctl restart pik.service 2>/dev/null || true
@@ -43,6 +47,7 @@ systemctl restart pik.service 2>/dev/null || true
 # 6. Поднимаем datasette + ежедневный таймер
 systemctl enable --now pik.service
 systemctl enable --now pik-scan.timer
+systemctl enable --now pik-scan-dev.timer
 systemctl status pik.service --no-pager | head -10
 
 # 7. Nginx — двухшаговая раскатка для первичного выпуска TLS-сертификата

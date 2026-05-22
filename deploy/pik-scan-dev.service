@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily price scan for non-PIK developers (ФСК, Донстрой, А101, Level, Абсолют, MR Group)
+After=network.target
+
+[Service]
+Type=oneshot
+User=pik
+Group=pik
+WorkingDirectory=/opt/pik
+Environment=TZ=Europe/Moscow
+# Запускается отдельно от bin.scan (ПИК): другой набор источников,
+# та же БД. --all обходит всех застройщиков из реестра параллельно.
+ExecStart=/opt/pik/venv/bin/python -m bin.scan_dev --db /opt/pik/data/pik.db --all
+StandardOutput=journal
+StandardError=journal
