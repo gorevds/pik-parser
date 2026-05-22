@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -15,6 +16,9 @@ from typing import Any, Callable
 import requests
 
 from pik.developers import ID_NAMESPACE, namespaced_id, stable_int_id
+
+
+log = logging.getLogger("pik.sources")
 
 
 DEFAULT_UA = (
@@ -75,6 +79,9 @@ def to_global_id(developer: str, native: int | str) -> int:
     Числовой id (или строка из цифр) в допустимом диапазоне используется
     напрямую; всё прочее (UUID, составные коды) хешируется детерминированно.
     """
+    if native is None:
+        # иначе все None схлопнулись бы в один и тот же hash("None")
+        raise ValueError("native id is None")
     n: int
     if isinstance(native, int):
         n = native
@@ -91,13 +98,19 @@ def to_global_id(developer: str, native: int | str) -> int:
 
 def _detect_discount(
     price: int | None, old_price: int | None
-) -> tuple[int, float | None, int]:
-    """(discount_abs, discount_pct, has_promo) из текущей и старой цены."""
+) -> tuple[int, float, int]:
+    """(discount_abs, discount_pct, has_promo) из текущей и старой цены.
+
+    Скидка ниже 0.5% (в т.ч. округляющаяся до 0.0%) считается отсутствующей —
+    все три значения тогда нулевые, без рассинхрона между ними.
+    """
     if not price or not old_price or old_price <= price:
         return 0, 0.0, 0
     abs_disc = old_price - price
     pct = round(abs_disc / old_price * 100, 2)
-    return abs_disc, pct, (1 if pct >= 0.5 else 0)
+    if pct < 0.5:
+        return 0, 0.0, 0
+    return abs_disc, pct, 1
 
 
 def build_rows(
@@ -123,11 +136,28 @@ def build_rows(
         for b in result.blocks
     ]
 
+    known_block_ids = {bp["block_id"] for bp in block_payloads}
+
     flat_rows: list[dict] = []
     snap_rows: list[dict] = []
+    seen_ids: set[int] = set()
+    skipped_noid = skipped_orphan = skipped_dup = 0
     for f in result.flats:
+        if f.native_id is None or f.native_block_id is None:
+            skipped_noid += 1
+            continue
         gid = to_global_id(developer, f.native_id)
         block_gid = to_global_id(developer, f.native_block_id)
+        # квартира без зарегистрированного ЖК осиротеет: в today_all её
+        # COALESCE(developer,'ПИК') ошибочно приписал бы к ПИК
+        if block_gid not in known_block_ids:
+            skipped_orphan += 1
+            continue
+        # коллизия id (теоретически — хеш строковых id) затёрла бы соседа
+        if gid in seen_ids:
+            skipped_dup += 1
+            continue
+        seen_ids.add(gid)
         area = f.area
         price = f.price
         meter_price = f.meter_price
@@ -181,6 +211,12 @@ def build_rows(
             "mortgage_best_name": None,
             "updated_at": None,
         })
+
+    if skipped_noid or skipped_orphan or skipped_dup:
+        log.warning(
+            "%s: пропущено квартир — без id: %d, без ЖК: %d, дубль id: %d",
+            developer, skipped_noid, skipped_orphan, skipped_dup,
+        )
     return block_payloads, flat_rows, snap_rows
 
 

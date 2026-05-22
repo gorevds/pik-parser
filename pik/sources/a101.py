@@ -55,7 +55,8 @@ def _to_norm(fl: dict) -> NormFlat:
         settlement_date=fl.get("stage_key_transfer_date"),
         url=None,  # публичного per-flat URL в API нет
         finish="WhiteBox" if fl.get("whitebox") else None,
-        number=str(fl["number"]) if fl.get("number") is not None else fl.get("article"),
+        number=str(fl["number"]) if fl.get("number") is not None
+               else fl.get("article"),
     )
 
 

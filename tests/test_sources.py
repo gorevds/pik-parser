@@ -87,7 +87,7 @@ def test_build_rows_links_flat_to_block_and_namespaces_ids():
 
 def test_build_rows_marks_studio():
     result = CollectResult(
-        blocks=[],
+        blocks=[NormBlock(native_id="b", name="ЖК Б", slug="b")],
         flats=[NormFlat(native_id=1, native_block_id="b", rooms=0, area=25.0,
                         floor=3, price=5_000_000)],
     )
@@ -98,12 +98,45 @@ def test_build_rows_marks_studio():
 
 def test_build_rows_computes_meter_price_when_missing():
     result = CollectResult(
-        blocks=[],
+        blocks=[NormBlock(native_id="b", name="ЖК Б", slug="b")],
         flats=[NormFlat(native_id=1, native_block_id="b", rooms=1, area=40.0,
                         floor=2, price=8_000_000, meter_price=None)],
     )
     _, _, snaps = build_rows("Level", result, scan_date="d", scan_ts="t")
     assert snaps[0]["meter_price"] == 200_000
+
+
+def test_build_rows_drops_orphan_flat_without_registered_block():
+    # квартира ссылается на ЖК, которого нет в blocks → её надо отбросить,
+    # иначе в today_all она ошибочно прикинулась бы квартирой ПИК
+    result = CollectResult(
+        blocks=[NormBlock(native_id="real", name="ЖК", slug="real")],
+        flats=[
+            NormFlat(native_id=1, native_block_id="real", rooms=1,
+                     area=40.0, floor=2, price=8_000_000),
+            NormFlat(native_id=2, native_block_id="ghost", rooms=2,
+                     area=60.0, floor=5, price=9_000_000),
+        ],
+    )
+    _, flats, snaps = build_rows("Level", result, scan_date="d", scan_ts="t")
+    assert len(flats) == 1 and len(snaps) == 1
+    assert flats[0]["guid"] == "1"
+
+
+def test_build_rows_drops_duplicate_and_idless_flats():
+    result = CollectResult(
+        blocks=[NormBlock(native_id="b", name="ЖК", slug="b")],
+        flats=[
+            NormFlat(native_id=7, native_block_id="b", rooms=1, area=40.0,
+                     floor=2, price=8_000_000),
+            NormFlat(native_id=7, native_block_id="b", rooms=2, area=50.0,
+                     floor=3, price=9_000_000),   # дубль id → отброшен
+            NormFlat(native_id=None, native_block_id="b", rooms=1, area=30.0,
+                     floor=1, price=5_000_000),   # без id → отброшен
+        ],
+    )
+    _, flats, _ = build_rows("Level", result, scan_date="d", scan_ts="t")
+    assert len(flats) == 1
 
 
 # --- fsk ----------------------------------------------------------------
