@@ -1,8 +1,12 @@
--- Справочник ЖК: id (PIK block_id) → имя/url + гео-метаданные.
+-- Справочник ЖК: id (block_id) → имя/url + гео-метаданные.
 -- Эти поля стабильны на уровне проекта и не дублируются в snapshots/flats.
+-- `developer` — застройщик ('ПИК', 'Самолёт', …); см. pik/developers.py.
+-- id для не-PIK застройщиков пространственно разнесён (offset*1e12 + native_id),
+-- чтобы block_id/flat_id разных застройщиков не сталкивались в общих таблицах.
 CREATE TABLE IF NOT EXISTS blocks (
     id                 INTEGER PRIMARY KEY,
     name               TEXT NOT NULL,
+    developer          TEXT NOT NULL DEFAULT 'ПИК',
     slug               TEXT,
     updated_at         TEXT,
     metro_name         TEXT,        -- ближайшая станция (по timeOnFoot)
@@ -70,6 +74,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS idx_snap_date  ON snapshots(scan_date);
 CREATE INDEX IF NOT EXISTS idx_flat_rooms ON flats(rooms);
 CREATE INDEX IF NOT EXISTS idx_flat_block ON flats(block_id);
+CREATE INDEX IF NOT EXISTS idx_block_developer ON blocks(developer);
 
 -- Агрегированная история из не-PIK источников: Cian, mskguru, новости и т.п.
 -- Для каждой строки — на какую дату относится цена и какой ЖК.
@@ -106,6 +111,7 @@ WITH block_latest AS (
 )
 SELECT
     f.id                      AS id,
+    COALESCE(b.developer, 'ПИК') AS застройщик,
     COALESCE(b.name, 'block ' || f.block_id) AS жк,
     CASE
         WHEN b.slug LIKE '%/%' THEN substr(b.slug, 1, instr(b.slug, '/') - 1)

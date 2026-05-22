@@ -21,12 +21,29 @@ def _migrate_snapshots(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE snapshots ADD COLUMN {col} {ddl}")
 
 
+def _migrate_blocks(conn: sqlite3.Connection) -> None:
+    """Добавляет колонку developer для БД, созданных до мультизастройщика.
+
+    Существующие строки получают DEFAULT 'ПИК' — БД до этой версии хранила
+    только ЖК ПИК. Выполняется ДО executescript: view today_all ссылается
+    на blocks.developer, колонка к этому моменту должна существовать.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(blocks)")}
+    if not existing:
+        return  # таблицы ещё нет — schema.sql сейчас её создаст
+    if "developer" not in existing:
+        conn.execute(
+            "ALTER TABLE blocks ADD COLUMN developer TEXT NOT NULL DEFAULT 'ПИК'"
+        )
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     # WAL: писатель (скан) и читатели (Datasette) не блокируют друг друга.
     # Режим персистентен в файле БД. Для :memory: PRAGMA молча остаётся
     # 'memory' — исключения не будет.
     conn.execute("PRAGMA journal_mode=WAL")
     _migrate_snapshots(conn)
+    _migrate_blocks(conn)
     sql = files("pik").joinpath("schema.sql").read_text(encoding="utf-8")
     conn.executescript(sql)
     conn.commit()

@@ -16,15 +16,23 @@ _BLOCK_META_COLS = (
 def upsert_block_meta(
     conn: sqlite3.Connection, *,
     block_id: int, name: str, slug: Optional[str], meta: dict, scan_ts: str,
+    developer: str = "ПИК",
 ) -> None:
-    """Upsert одной записи blocks с полной мета-информацией."""
+    """Upsert одной записи blocks с полной мета-информацией.
+
+    `developer` по умолчанию 'ПИК' — обратная совместимость с PIK-сканером.
+    """
     set_clause = ", ".join(f"{c}=excluded.{c}" for c in _BLOCK_META_COLS)
-    cols = ("id", "name", "slug", "updated_at") + _BLOCK_META_COLS
+    cols = ("id", "name", "developer", "slug", "updated_at") + _BLOCK_META_COLS
     placeholders = ", ".join("?" for _ in cols)
-    values = [block_id, name, slug, scan_ts] + [meta.get(c) for c in _BLOCK_META_COLS]
+    values = [block_id, name, developer, slug, scan_ts] + [
+        meta.get(c) for c in _BLOCK_META_COLS
+    ]
     sql = (
         f"INSERT INTO blocks ({', '.join(cols)}) VALUES ({placeholders}) "
-        f"ON CONFLICT(id) DO UPDATE SET name=excluded.name, slug=COALESCE(excluded.slug, blocks.slug), "
+        f"ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
+        f"developer=excluded.developer, "
+        f"slug=COALESCE(excluded.slug, blocks.slug), "
         f"updated_at=excluded.updated_at, {set_clause}"
     )
     conn.execute(sql, values)
