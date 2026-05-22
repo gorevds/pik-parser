@@ -232,3 +232,52 @@ def test_donstroy_collect_paginates_and_dedups_blocks(monkeypatch):
     assert len(result.flats) == donstroy._PAGE_SIZE + 1
     # один ЖК на все карточки — блок без дублей
     assert {b.name for b in result.blocks} == {"Символ"}
+
+
+# --- a101 ---------------------------------------------------------------
+
+from pik.sources import a101  # noqa: E402
+
+
+def test_a101_to_norm_maps_real_fixture():
+    fl = json.load(open(FIXTURES / "a101_flats.json"))["results"][0]
+    norm = a101._to_norm(fl)
+    assert norm.native_id == 78303
+    assert norm.native_block_id == "rodniye-kvartaly"
+    assert norm.rooms == 0          # studio=true → студия, хотя room=1
+    assert norm.price == 6_947_144  # actual_price
+    assert norm.old_price == 8_793_728  # price (база) > actual
+    assert norm.meter_price == 337_240  # actual_ppm
+    assert norm.status == "free"    # status 4
+    assert norm.bulk_name == "Корпус 2"
+    assert norm.section_no == 6
+    assert norm.floor == 5
+
+
+def test_a101_studio_flag_overrides_room_count():
+    norm = a101._to_norm({"id": 1, "project_slug": "p", "room": 1,
+                          "studio": True, "actual_price": 5_000_000})
+    assert norm.rooms == 0
+    norm2 = a101._to_norm({"id": 2, "project_slug": "p", "room": 2,
+                           "studio": False, "actual_price": 5_000_000})
+    assert norm2.rooms == 2
+
+
+def test_a101_collect_follows_next_pagination(monkeypatch):
+    fl = json.load(open(FIXTURES / "a101_flats.json"))["results"][0]
+    pages = [
+        {"results": [fl], "next": "https://a101.ru/api/flats/?offset=1000"},
+        {"results": [{**fl, "id": 99, "project_slug": "other", "project": "Другой"}],
+         "next": None},
+    ]
+    calls = []
+
+    def fake_request_json(session, method, url, **kw):
+        calls.append(url)
+        return pages[len(calls) - 1]
+
+    monkeypatch.setattr("pik.sources.a101.request_json", fake_request_json)
+    result = a101.collect()
+    assert len(calls) == 2  # прошли по `next`
+    assert len(result.flats) == 2
+    assert {b.slug for b in result.blocks} == {"rodniye-kvartaly", "other"}
