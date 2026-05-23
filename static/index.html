@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Цены ПИК — снимки по дням</title>
+<title>Цены на квартиры — топ-застройщики Москвы</title>
 <link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_modern.min.css" rel="stylesheet">
 <style>
   :root {
@@ -148,7 +148,7 @@
 <body>
 
 <header>
-  <h1>Цены ПИК — снимки по дням</h1>
+  <h1>Цены на квартиры — топ-застройщики Москвы</h1>
   <div class="stats" id="stats">загрузка…</div>
   <div style="margin-left:auto">
     <a href="/pik/today_all" target="_blank">сырые данные</a>
@@ -161,6 +161,9 @@
 
 <main>
   <div class="controls">
+    <span>Застройщик:</span>
+    <select id="devFilter"><option value="all">все</option></select>
+    <span style="color:var(--muted);margin-left:8px">|</span>
     <span>Город:</span>
     <select id="cityFilter"><option value="all">все</option></select>
     <span style="color:var(--muted);margin-left:8px">|</span>
@@ -225,7 +228,39 @@ const fmtPromoBadge = (cell) => {
 const fmtLink = (cell) => {
   const v = cell.getValue();
   if (!v) return "";
-  return `<a href="${v}" target="_blank" rel="noopener">pik.ru ↗</a>`;
+  let host = "сайт";
+  try { host = new URL(v).hostname.replace(/^www\./, ""); } catch (_) {}
+  return `<a href="${v}" target="_blank" rel="noopener">${host} ↗</a>`;
+};
+
+// Подписи кодов городов — синхронно с CITY_CENTERS в pik/geo.py
+const CITY_LABELS = {
+  msk: "Москва", mo: "МО", spb: "СПб", ekb: "Екб",
+  kazan: "Казань", nn: "Н.Новгород", yaroslavl: "Ярославль",
+  vladivostok: "Владивосток", khabarovsk: "Хабаровск",
+  novorossiisk: "Новороссийск", "yuzhno-sakhalinsk": "Ю-Сахалинск",
+  "ulan-ude": "Улан-Удэ", blagoveshchensk: "Благовещенск",
+  krasnodar: "Краснодар", tyumen: "Тюмень", obninsk: "Обнинск",
+  kaluga: "Калуга", ufa: "Уфа", chelyabinsk: "Челябинск",
+  other: "другое",
+};
+const cityLabel = (code) => CITY_LABELS[code] || code || "";
+
+// Палитра для бейджей застройщиков — стабильные цвета по имени
+const DEV_COLORS = {
+  "ПИК":      "#0f766e",
+  "А101":     "#7c3aed",
+  "Донстрой": "#dc2626",
+  "Абсолют":  "#ea580c",
+  "Level":    "#2563eb",
+  "ГК ФСК":   "#65a30d",
+  "MR Group": "#0891b2",
+};
+const fmtDeveloper = (cell) => {
+  const v = cell.getValue();
+  if (!v) return "";
+  const color = DEV_COLORS[v] || "#6b7280";
+  return `<span style="background:${color};color:white;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600">${v}</span>`;
 };
 
 const rowFormatter = (row) => {
@@ -237,14 +272,12 @@ const rowFormatter = (row) => {
 const columns = [
   {title: "ID", field: "id", width: 100, hozAlign: "right", headerHozAlign: "right",
    headerFilter: "input", formatter: (c) => String(c.getValue() ?? "")},
+  {title: "Застройщик", field: "застройщик", width: 120, hozAlign: "center", headerHozAlign: "center",
+   headerFilter: "list", formatter: fmtDeveloper,
+   headerFilterParams: {values: ["", "ПИК", "А101", "Донстрой", "Абсолют",
+                                  "Level", "ГК ФСК", "MR Group"]}},
   {title: "Город", field: "город", width: 130, headerFilter: "input",
-   formatter: (c) => {
-     const labels = {msk:"Москва", spb:"СПб", ekb:"Екб", kazan:"Казань", nn:"Н.Новгород",
-       yaroslavl:"Ярославль", vladivostok:"Владивосток", khabarovsk:"Хабаровск",
-       "yuzhno-sakhalinsk":"Ю-Сахалинск", "ulan-ude":"Улан-Удэ", blagoveshchensk:"Благовещенск",
-       novorossiisk:"Новороссийск", tyumen:"Тюмень", obninsk:"Обнинск"};
-     return labels[c.getValue()] || c.getValue() || "";
-   }},
+   formatter: (c) => cityLabel(c.getValue())},
   {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
   {title: "Метро", field: "метро", width: 160, headerFilter: "input",
    formatter: (c) => {
@@ -306,7 +339,7 @@ const columns = [
      const id = c.getValue();
      return id ? `<a href="/flat.html?id=${id}" target="_blank" rel="noopener">📈 история</a>` : "";
    }},
-  {title: "PIK", field: "ссылка", width: 90, hozAlign: "center", headerHozAlign: "center",
+  {title: "Сайт", field: "ссылка", width: 110, hozAlign: "center", headerHozAlign: "center",
    formatter: fmtLink, headerSort: false},
 ];
 
@@ -315,23 +348,16 @@ let allRows = [];
 let currentRoom = "all";
 let currentCity = "all";
 let currentZk = "all";
+let currentDev = "all";
 let promoOnly = false;
 let areaMin = null;
 let areaMax = null;
 const COLS_LS_KEY = "pik:hidden_cols:v1";
 const hiddenCols = new Set(JSON.parse(localStorage.getItem(COLS_LS_KEY) || "[]"));
 
-const CITY_LABELS = {
-  msk: "Москва+МО", spb: "Санкт-Петербург", ekb: "Екатеринбург",
-  kazan: "Казань", nn: "Нижний Новгород", yaroslavl: "Ярославль",
-  vladivostok: "Владивосток", khabarovsk: "Хабаровск",
-  novorossiisk: "Новороссийск", "yuzhno-sakhalinsk": "Южно-Сахалинск",
-  "ulan-ude": "Улан-Удэ", blagoveshchensk: "Благовещенск",
-  tyumen: "Тюмень", obninsk: "Обнинск",
-};
-
 function applyFilter() {
   let rows = allRows;
+  if (currentDev !== "all") rows = rows.filter(r => r["застройщик"] === currentDev);
   if (currentCity !== "all") rows = rows.filter(r => r["город"] === currentCity);
   if (currentZk !== "all") rows = rows.filter(r => r["жк"] === currentZk);
   if (currentRoom !== "all") rows = rows.filter(r => r["комнат"] === currentRoom);
@@ -443,12 +469,31 @@ async function load() {
   const rows = await resp.json();
   allRows = rows;
 
+  // Populate developer dropdown — порядок «ПИК сначала» (offset 0), затем
+  // по убыванию числа квартир, чтобы наиболее заполненные шли вверх
+  const devCounts = rows.reduce((acc, r) => {
+    const d = r["застройщик"]; if (d) acc[d] = (acc[d] || 0) + 1;
+    return acc;
+  }, {});
+  const devs = Object.entries(devCounts).sort((a, b) => b[1] - a[1]);
+  const devSel = document.getElementById("devFilter");
+  for (const [d, n] of devs) {
+    const opt = document.createElement("option");
+    opt.value = d; opt.textContent = `${d} (${n})`;
+    devSel.appendChild(opt);
+  }
+  devSel.addEventListener("change", (e) => {
+    currentDev = e.target.value;
+    currentZk = "all";
+    applyFilter();
+  });
+
   // Populate city dropdown
   const cities = [...new Set(rows.map(r => r["город"]).filter(Boolean))].sort();
   const citySel = document.getElementById("cityFilter");
   for (const c of cities) {
     const opt = document.createElement("option");
-    opt.value = c; opt.textContent = CITY_LABELS[c] || c;
+    opt.value = c; opt.textContent = cityLabel(c);
     citySel.appendChild(opt);
   }
   citySel.addEventListener("change", (e) => {
@@ -521,7 +566,8 @@ async function load() {
 
   const last = rows[0]?.["дата_среза"] || "—";
   document.getElementById("footer").textContent =
-    `Источник: api.pik.ru/v2/flat?block_id=1165. Скан каждый день 06:00 МСК. Последний срез: ${last}.`;
+    `Источники: ПИК + 6 застройщиков (ФСК, А101, Донстрой, Абсолют, Level, MR Group). ` +
+    `Скан ежедневно: 06:00 МСК (ПИК), 06:30 МСК (остальные). Последний срез: ${last}.`;
 }
 load().catch((e) => {
   document.getElementById("grid").innerHTML =
