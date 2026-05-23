@@ -1,6 +1,7 @@
 import math
 from pik.geo import (
-    extract_block_meta, haversine_km, primary_metro, derive_city, CITY_CENTERS,
+    extract_block_meta, haversine_km, primary_metro, derive_city,
+    city_from_address, CITY_CENTERS,
 )
 
 
@@ -21,6 +22,49 @@ def test_derive_city_from_slug():
     assert derive_city("narvin") == "msk"
     assert derive_city(None) == "msk"
     assert derive_city("spb/aeronaut") == "spb"
+
+
+def test_city_from_address_moscow_vs_mo():
+    """Подстрока 'Москва' есть в 'Г.Москва', но НЕ в 'Московская'."""
+    assert city_from_address("Россия, г. Москва, ВАО") == "msk"
+    assert city_from_address(" Г.Москва, СВАО") == "msk"
+    # «Московская область» не должна перехватываться как 'msk'
+    assert city_from_address("Московская область, г.о. Котельники") == "mo"
+    assert city_from_address("Московская обл., г. Котельники") == "mo"
+    assert city_from_address("МО, Ленинский район, пос. Развилка") == "mo"
+
+
+def test_city_from_address_regions():
+    assert city_from_address("Сахалинская область, г. Южно-Сахалинск") == "yuzhno-sakhalinsk"
+    assert city_from_address(" Приморский край, г. Владивосток") == "vladivostok"
+    assert city_from_address("Свердловская область, г. Екатеринбург") == "ekb"
+    assert city_from_address("Республика Татарстан, г. Казань") == "kazan"
+    assert city_from_address("Санкт-Петербург, Красногвардейский район") == "spb"
+    assert city_from_address("Ярославская область, г. Ярославль") == "yaroslavl"
+    assert city_from_address("Хабаровский край, г. Хабаровск") == "khabarovsk"
+
+
+def test_city_from_address_empty_defaults_to_msk():
+    # не-PIK застройщики у нас все Москва, адрес часто пустой
+    assert city_from_address(None) == "msk"
+    assert city_from_address("") == "msk"
+
+
+def test_city_from_address_unknown_is_other():
+    assert city_from_address("Республика Калмыкия, г. Элиста") == "other"
+
+
+def test_extract_block_meta_uses_address_not_slug_for_city():
+    """Раньше distance_km считался от Кремля для всех slug'ов без '/' — даже
+    для сахалинских ЖК давало ~6700 км мусора. Теперь — от центра по адресу."""
+    item = {
+        "address": "Сахалинская область, г. Южно-Сахалинск, ул. Жириновского",
+        "block": {"latitude": 46.9588, "longitude": 142.7388},
+        "metroStationsServiceNew": [],
+    }
+    m = extract_block_meta(item, slug="uyun-park")  # slug без префикса города
+    assert m["city"] == "yuzhno-sakhalinsk"
+    assert m["distance_km"] == 0.0  # координаты в центре Южно-Сахалинска
 
 
 def test_primary_metro_picks_closest_on_foot():

@@ -8,7 +8,7 @@ from typing import Optional
 _BLOCK_META_COLS = (
     "metro_name", "metro_line_name", "metro_line_type",
     "metro_time_foot", "metro_time_transport",
-    "latitude", "longitude", "address",
+    "latitude", "longitude", "address", "city",
     "distance_km", "floors_max",
 )
 

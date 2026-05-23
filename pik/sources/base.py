@@ -16,6 +16,7 @@ from typing import Any, Callable
 import requests
 
 from pik.developers import ID_NAMESPACE, namespaced_id, stable_int_id
+from pik.geo import city_from_address
 
 
 log = logging.getLogger("pik.sources")
@@ -133,16 +134,21 @@ def build_rows(
     block_payloads — аргументы для blocks_meta.upsert_block_meta;
     flat_rows / snap_rows — строки для store.upsert.
     """
-    block_payloads = [
-        {
+    block_payloads = []
+    for b in result.blocks:
+        # копируем — NormBlock frozen, и мы вписываем 'city'. Город из адреса,
+        # если есть; без адреса (Donstroy/A101/Level/Absolut/MR Group все
+        # московские по выбору источника) — 'msk'. FSK даёт post_address →
+        # city_from_address корректно вернёт 'msk' или 'mo'.
+        meta = dict(b.meta)
+        meta.setdefault("city", city_from_address(meta.get("address")))
+        block_payloads.append({
             "block_id": to_global_id(developer, b.native_id),
             "name": b.name,
             "slug": b.slug,
-            "meta": b.meta,
+            "meta": meta,
             "developer": developer,
-        }
-        for b in result.blocks
-    ]
+        })
 
     known_block_ids = {bp["block_id"] for bp in block_payloads}
 

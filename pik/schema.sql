@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS blocks (
     latitude           REAL,        -- координаты ЖК
     longitude          REAL,
     address            TEXT,
-    distance_km        REAL,        -- расстояние от центра города (Кремль для Москвы)
+    city               TEXT,        -- код города: 'msk' | 'mo' | 'spb' | ... (см. pik.geo)
+    distance_km        REAL,        -- расстояние от центра ПРАВИЛЬНОГО города (по city)
     floors_max         INTEGER      -- этажность здания
 );
 
@@ -113,10 +114,10 @@ SELECT
     f.id                      AS id,
     COALESCE(b.developer, 'ПИК') AS застройщик,
     COALESCE(b.name, 'block ' || f.block_id) AS жк,
-    CASE
-        WHEN b.slug LIKE '%/%' THEN substr(b.slug, 1, instr(b.slug, '/') - 1)
-        ELSE 'msk'
-    END                       AS город,
+    -- город — из b.city (заполняется при сканировании из адреса; см.
+    -- pik.geo.city_from_address). Для строк до миграции, где city не
+    -- проставлен, считаем 'msk' (так было до мульти-города).
+    COALESCE(b.city, 'msk')   AS город,
     b.metro_name              AS метро,
     CASE b.metro_line_type
         WHEN 1 THEN 'M'

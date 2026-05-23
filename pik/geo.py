@@ -8,6 +8,7 @@ from typing import Optional
 # Центры городов (для расчёта дистанции через haversine)
 CITY_CENTERS: dict[str, tuple[float, float]] = {
     "msk":               (55.7520, 37.6175),   # Кремль
+    "mo":                (55.7520, 37.6175),   # МО — считаем от Кремля как опоры
     "spb":               (59.9343, 30.3351),   # Дворцовая
     "ekb":               (56.8389, 60.6057),   # Площадь 1905 года
     "kazan":             (55.7887, 49.1221),   # Кремль (Казанский)
@@ -19,9 +20,57 @@ CITY_CENTERS: dict[str, tuple[float, float]] = {
     "yuzhno-sakhalinsk": (46.9588, 142.7388),
     "ulan-ude":          (51.8335, 107.5842),
     "blagoveshchensk":   (50.2906, 127.5272),
+    "krasnodar":         (45.0355, 38.9753),
     "tyumen":            (57.1530, 65.5343),
     "obninsk":           (55.0958, 36.6133),
+    "kaluga":            (54.5135, 36.2614),
+    "ufa":               (54.7388, 55.9721),
+    "chelyabinsk":       (55.1644, 61.4368),
 }
+
+
+# Подстроки в адресе → код города. Регионы идут первыми, чтобы «Московская
+# обл.» не перехватывало «Свердловскую область» и т.п. Та же логика мириорится
+# SQL-CASE'ом в pik.store._migrate_blocks (backfill для старых строк) и в
+# pik/schema.sql косвенно через колонку blocks.city.
+_CITY_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("Санкт-Петербург",),                 "spb"),
+    (("Татарстан", "Казан"),               "kazan"),
+    (("Свердловская", "Екатеринбург"),     "ekb"),
+    (("Ярослав",),                         "yaroslavl"),
+    (("Сахалин",),                         "yuzhno-sakhalinsk"),
+    (("Приморский", "Владивосток"),        "vladivostok"),
+    (("Хабаров",),                         "khabarovsk"),
+    (("Новороссийск",),                    "novorossiisk"),
+    (("Краснодар",),                       "krasnodar"),
+    (("Тюмен",),                           "tyumen"),
+    (("Обнинск",),                         "obninsk"),
+    (("Калуг",),                           "kaluga"),
+    (("Нижегород", "Нижний Новгород"),     "nn"),
+    (("Башкортостан", "г. Уфа", "г.Уфа"),  "ufa"),
+    (("Челяб",),                           "chelyabinsk"),
+    (("Улан-Удэ", "Бурят"),                "ulan-ude"),
+    (("Благовещен", "Амурская"),           "blagoveshchensk"),
+    # МО — после регионов
+    (("Московская обл", "Московская область", "МО, ", "МО,"), "mo"),
+    # Москва — подстрока 'Москва' (но не 'Московская'!). Идёт последней.
+    (("Москва",),                          "msk"),
+)
+
+
+def city_from_address(address: str | None) -> str:
+    """Извлечь код города из адреса блока (PIK/FSK API).
+
+    Возвращает ключ из CITY_CENTERS либо 'other'. Пустой адрес → 'msk':
+    у не-PIK застройщиков адрес мы не собираем, но их источники сами по себе
+    московские (FSK city_id=1, остальные — DRF/GraphQL по московским ЖК).
+    """
+    if not address:
+        return "msk"
+    for needles, code in _CITY_PATTERNS:
+        if any(n in address for n in needles):
+            return code
+    return "other"
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -74,7 +123,13 @@ def primary_metro(stations: list) -> Optional[dict]:
 
 
 def derive_city(slug: Optional[str]) -> str:
-    """slug 'kazan/siberovo' -> 'kazan'; 'narvin' -> 'msk'."""
+    """LEGACY: slug 'kazan/siberovo' -> 'kazan'; 'narvin' -> 'msk'.
+
+    Историческая логика: PIK теоретически мог отдавать slug с префиксом города,
+    но на практике все актуальные slug'и (Нарвин, Саларьево парк, Уюн парк
+    и т.д.) — без '/'. Использовать в новом коде НЕ нужно — есть
+    `city_from_address`, которая правильно работает для всех ЖК.
+    """
     if not slug:
         return "msk"
     if "/" in slug:
@@ -121,18 +176,23 @@ def extract_block_meta(data: dict, *, slug: Optional[str] = None) -> dict:
         or _to_float(flat.get("longitude"))
     )
 
-    distance_km = None
-    city = derive_city(slug)
-    if lat is not None and lon is not None and city in CITY_CENTERS:
-        c_lat, c_lon = CITY_CENTERS[city]
-        distance_km = round(haversine_km(lat, lon, c_lat, c_lon), 1)
-
     floors_max = _to_int(bulk.get("floors"))
     address = (
         data.get("address")
         or flat.get("address")
         or bulk.get("build_adress")
     )
+
+    # Город — из адреса (надёжно). Slug — fallback для legacy-источников,
+    # где адреса в payload нет, но slug несёт префикс города (теоретически).
+    city = city_from_address(address)
+    if city == "msk" and slug and "/" in slug:
+        city = derive_city(slug)
+
+    distance_km = None
+    if lat is not None and lon is not None and city in CITY_CENTERS:
+        c_lat, c_lon = CITY_CENTERS[city]
+        distance_km = round(haversine_km(lat, lon, c_lat, c_lon), 1)
 
     # Fallbacks: block-level time/metro если структура metroStationsService пуста
     metro_name = (p or {}).get("name") or block.get("metro")
@@ -150,6 +210,7 @@ def extract_block_meta(data: dict, *, slug: Optional[str] = None) -> dict:
         "latitude":           lat,
         "longitude":          lon,
         "address":            address,
+        "city":               city,
         "distance_km":        distance_km,
         "floors_max":         floors_max,
     }

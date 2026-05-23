@@ -22,11 +22,16 @@ def _migrate_snapshots(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_blocks(conn: sqlite3.Connection) -> None:
-    """Добавляет колонку developer для БД, созданных до мультизастройщика.
+    """Доводит таблицу blocks до актуальной схемы (developer, city).
 
-    Существующие строки получают DEFAULT 'ПИК' — БД до этой версии хранила
-    только ЖК ПИК. Выполняется ДО executescript: view today_all ссылается
-    на blocks.developer, колонка к этому моменту должна существовать.
+    Выполняется ДО executescript: view today_all ссылается на эти колонки,
+    они должны существовать к моменту CREATE VIEW.
+
+    `developer` — мульти-застройщик (2026-05-22). Существующие строки
+    получают DEFAULT 'ПИК'.
+    `city` — код города из адреса (2026-05-23). Без backfill старые блоки
+    остались бы с NULL и для них view сваливался бы в 'msk' через COALESCE
+    (т.е. Сахалин/Владивосток показались бы как Москва).
     """
     existing = {row[1] for row in conn.execute("PRAGMA table_info(blocks)")}
     if not existing:
@@ -35,6 +40,46 @@ def _migrate_blocks(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE blocks ADD COLUMN developer TEXT NOT NULL DEFAULT 'ПИК'"
         )
+    if "city" not in existing:
+        conn.execute("ALTER TABLE blocks ADD COLUMN city TEXT")
+    # Backfill для строк без city — зеркало pik.geo.city_from_address.
+    # `WHERE city IS NULL` делает повторный запуск дешёвым no-op'ом.
+    # На минимальных легаси-схемах без `address` (фикстуры тестов) пропускаем:
+    # извлекать город неоткуда, view упадёт в COALESCE → 'msk'.
+    if "address" in existing:
+        conn.execute(_CITY_BACKFILL_SQL)
+
+
+# Зеркало pik.geo._CITY_PATTERNS / city_from_address. Держим в SQL чтобы не
+# вызывать Python из миграции на 20k строк; порядок WHEN тот же — регионы
+# раньше «Московской области», иначе «Свердловская область» уйдёт в 'mo'.
+_CITY_BACKFILL_SQL = """
+UPDATE blocks SET city = CASE
+    WHEN address LIKE '%Санкт-Петербург%' THEN 'spb'
+    WHEN address LIKE '%Татарстан%' OR address LIKE '%Казан%' THEN 'kazan'
+    WHEN address LIKE '%Свердловская%' OR address LIKE '%Екатеринбург%' THEN 'ekb'
+    WHEN address LIKE '%Ярослав%' THEN 'yaroslavl'
+    WHEN address LIKE '%Сахалин%' THEN 'yuzhno-sakhalinsk'
+    WHEN address LIKE '%Приморский%' OR address LIKE '%Владивосток%' THEN 'vladivostok'
+    WHEN address LIKE '%Хабаров%' THEN 'khabarovsk'
+    WHEN address LIKE '%Новороссийск%' THEN 'novorossiisk'
+    WHEN address LIKE '%Краснодар%' THEN 'krasnodar'
+    WHEN address LIKE '%Тюмен%' THEN 'tyumen'
+    WHEN address LIKE '%Обнинск%' THEN 'obninsk'
+    WHEN address LIKE '%Калуг%' THEN 'kaluga'
+    WHEN address LIKE '%Нижегород%' OR address LIKE '%Нижний Новгород%' THEN 'nn'
+    WHEN address LIKE '%Башкортостан%' OR address LIKE '%г. Уфа%' OR address LIKE '%г.Уфа%' THEN 'ufa'
+    WHEN address LIKE '%Челяб%' THEN 'chelyabinsk'
+    WHEN address LIKE '%Улан-Удэ%' OR address LIKE '%Бурят%' THEN 'ulan-ude'
+    WHEN address LIKE '%Благовещен%' OR address LIKE '%Амурская%' THEN 'blagoveshchensk'
+    WHEN address LIKE '%Московская обл%' OR address LIKE '%Московская область%'
+         OR address LIKE 'МО,%' OR address LIKE '%МО, %' THEN 'mo'
+    WHEN address LIKE '%Москва%' THEN 'msk'
+    WHEN address IS NULL THEN 'msk'
+    ELSE 'other'
+END
+WHERE city IS NULL
+"""
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
