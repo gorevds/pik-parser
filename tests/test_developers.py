@@ -107,3 +107,32 @@ def test_migration_backfills_city_from_address(tmp_path):
     assert rows[4] == "mo"
     assert rows[5] == "msk"
     conn.close()
+
+
+def test_migration_collapses_non_pik_other_to_msk(tmp_path):
+    """FSK иногда отдаёт post_address без префикса города («ул. ..., д. ...»).
+
+    city_from_address вернёт 'other', но FSK у нас отфильтрован по Москве
+    (city_id=1) — миграция должна свернуть 'other' в 'msk' для не-PIK.
+    """
+    db = tmp_path / "fsk_other.db"
+    conn = sqlite3.connect(db)
+    conn.execute("""
+        CREATE TABLE blocks (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, developer TEXT,
+            slug TEXT, address TEXT
+        )
+    """)
+    conn.executemany(
+        "INSERT INTO blocks (id, name, developer, address) VALUES (?, ?, ?, ?)",
+        [
+            (10, "Сидней Прайм", "ГК ФСК", "ул. Шеногина, д. 2, стр. 3"),
+            (11, "Нарвин",       "ПИК",    "ул. Шеногина, д. 2"),  # PIK без региона
+        ],
+    )
+    conn.commit()
+    apply_schema(conn)
+    rows = dict(conn.execute("SELECT id, city FROM blocks").fetchall())
+    assert rows[10] == "msk"    # не-PIK 'other' → 'msk'
+    assert rows[11] == "other"  # PIK сохраняет 'other' как сигнал
+    conn.close()

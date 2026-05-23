@@ -139,9 +139,15 @@ def build_rows(
         # копируем — NormBlock frozen, и мы вписываем 'city'. Город из адреса,
         # если есть; без адреса (Donstroy/A101/Level/Absolut/MR Group все
         # московские по выбору источника) — 'msk'. FSK даёт post_address →
-        # city_from_address корректно вернёт 'msk' или 'mo'.
+        # city_from_address вернёт 'msk' / 'mo' / 'other' (последнее — если в
+        # адресе нет ни региона, ни «Москва»: бывает у FSK с голым «ул. ..., д.
+        # ...»). Не-PIK источники сами фильтруют по Москве, поэтому 'other' у
+        # них принудительно сворачивается в 'msk'.
         meta = dict(b.meta)
-        meta.setdefault("city", city_from_address(meta.get("address")))
+        city = meta.get("city") or city_from_address(meta.get("address"))
+        if city == "other":
+            city = "msk"
+        meta["city"] = city
         block_payloads.append({
             "block_id": to_global_id(developer, b.native_id),
             "name": b.name,

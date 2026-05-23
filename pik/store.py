@@ -48,6 +48,11 @@ def _migrate_blocks(conn: sqlite3.Connection) -> None:
     # извлекать город неоткуда, view упадёт в COALESCE → 'msk'.
     if "address" in existing:
         conn.execute(_CITY_BACKFILL_SQL)
+        # вторая фаза: не-PIK 'other' (FSK без префикса города) → 'msk'
+        if "developer" in existing or "developer" in {
+            row[1] for row in conn.execute("PRAGMA table_info(blocks)")
+        }:
+            conn.execute(_CITY_NON_PIK_OTHER_FIX_SQL)
 
 
 # Зеркало pik.geo._CITY_PATTERNS / city_from_address. Держим в SQL чтобы не
@@ -80,6 +85,18 @@ UPDATE blocks SET city = CASE
 END
 WHERE city IS NULL
 """
+
+
+# Не-PIK источники сами фильтруют по Москве (FSK city_id=1, остальные —
+# московские DRF/GraphQL), но FSK иногда отдаёт post_address без префикса
+# города («ул. Шеногина, 2»). city_from_address для такого вернёт 'other'.
+# Сворачиваем 'other' в 'msk' для не-PIK блоков — это корректно по контракту
+# источника. Для PIK 'other' оставляем как есть (PIK всегда даёт регион в
+# адресе, а 'other' там — реальный сигнал «надо расширить _CITY_PATTERNS»).
+_CITY_NON_PIK_OTHER_FIX_SQL = (
+    "UPDATE blocks SET city = 'msk' "
+    "WHERE city = 'other' AND developer != 'ПИК'"
+)
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
