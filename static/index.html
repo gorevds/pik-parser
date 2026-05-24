@@ -339,6 +339,12 @@ const columns = [
      const id = c.getValue();
      return id ? `<a href="/flat.html?id=${id}" target="_blank" rel="noopener">📈 история</a>` : "";
    }},
+  {title: "План", field: "планировка", width: 80, hozAlign: "center", headerHozAlign: "center",
+   headerSort: false,
+   formatter: (c) => {
+     const v = c.getValue();
+     return v ? `<a href="${v}" target="_blank" rel="noopener" title="${v}">📐</a>` : "";
+   }},
   {title: "Сайт", field: "ссылка", width: 110, hozAlign: "center", headerHozAlign: "center",
    formatter: fmtLink, headerSort: false},
 ];
