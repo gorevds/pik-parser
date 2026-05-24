@@ -561,6 +561,8 @@ const CITY_LABELS = {
   "ulan-ude": "Улан-Удэ", blagoveshchensk: "Благовещенск",
   krasnodar: "Краснодар", tyumen: "Тюмень", obninsk: "Обнинск",
   kaluga: "Калуга", ufa: "Уфа", chelyabinsk: "Челябинск",
+  nsk: "Новосибирск", surgut: "Сургут", omsk: "Омск",
+  kurgan: "Курган", lipetsk: "Липецк", perm: "Пермь",
   other: "другое",
 };
 const cityLabel = (code) => CITY_LABELS[code] || code || "";
@@ -576,6 +578,7 @@ const DEV_COLORS = {
   "MR Group": "#0891b2",
   "Гранель":  "#9333ea",
   "Инград":   "#0284c7",
+  "Брусника": "#be123c",
 };
 const fmtDeveloper = (cell) => {
   const v = cell.getValue();
@@ -606,7 +609,8 @@ const columns = [
   {title: "Застройщик", field: "застройщик", width: 120, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list", formatter: fmtDeveloper,
    headerFilterParams: {values: ["", "ПИК", "А101", "Донстрой", "Абсолют",
-                                  "Level", "ГК ФСК", "MR Group", "Гранель", "Инград"]}},
+                                  "Level", "ГК ФСК", "MR Group", "Гранель",
+                                  "Инград", "Брусника"]}},
   {title: "Город", field: "город", width: 130, headerFilter: "input",
    formatter: (c) => cityLabel(c.getValue())},
   {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
@@ -885,9 +889,12 @@ const RENT_CITY_F = { msk: 1.00, mo: 0.65, spb: 0.70, ekb: 0.50, kazan: 0.45,
                        novorossiisk: 0.40, "yuzhno-sakhalinsk": 0.50, "ulan-ude": 0.35,
                        blagoveshchensk: 0.40, krasnodar: 0.50, tyumen: 0.45,
                        obninsk: 0.40, kaluga: 0.35, ufa: 0.40, chelyabinsk: 0.40,
+                       nsk: 0.50, surgut: 0.55, omsk: 0.40,
+                       kurgan: 0.30, lipetsk: 0.35, perm: 0.45,
                        other: 0.40 };
 const RENT_DEV_LIQ = { "ПИК": 1.05, "Донстрой": 1.03, "Level": 1.00, "А101": 0.98,
-                       "Абсолют": 0.96, "ГК ФСК": 0.98, "MR Group": 0.95 };
+                       "Абсолют": 0.96, "ГК ФСК": 0.98, "MR Group": 0.95,
+                       "Гранель": 0.98, "Инград": 1.00, "Брусника": 1.00 };
 
 function rentFactors(r) {
   // Вынесено отдельно: и расчёт, и tooltip используют одни и те же
@@ -1841,7 +1848,8 @@ async function load() {
 
   const last = rows[0]?.["дата_среза"] || "—";
   document.getElementById("footer").textContent =
-    `Источники: 7 застройщиков — ПИК, А101, Донстрой, Абсолют, Level, ГК ФСК, MR Group. ` +
+    `Источники: 10 застройщиков — ПИК, А101, Донстрой, Абсолют, Level, ` +
+    `ГК ФСК, MR Group, Гранель, Инград, Брусника. ` +
     `Скан ежедневно в 06:00 МСК. Последний срез: ${last}.`;
 }
 load().catch((e) => {

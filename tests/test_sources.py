@@ -828,6 +828,99 @@ def test_ingrad_collect_aggregates_block_meta(monkeypatch):
     assert b.meta["metro_time_foot"] == 7
 
 
+from pik.sources import brusnika  # noqa: E402
+
+
+def test_brusnika_finish_from_tags():
+    assert brusnika._finish_from_tags(["Без отделки", "Лоджия"]) == "Без отделки"
+    assert brusnika._finish_from_tags(["Предчистовая отделка"]) == "Предчистовая отделка"
+    assert brusnika._finish_from_tags(["White Box", "Вид"]) == "WhiteBox"
+    assert brusnika._finish_from_tags(["whitebox"]) == "WhiteBox"
+    assert brusnika._finish_from_tags(["С отделкой", "Французский балкон"]) == "С отделкой"
+    assert brusnika._finish_from_tags(["С отделкой и мебелью"]) == "С отделкой и мебелью"
+    assert brusnika._finish_from_tags(["Вид во двор"]) is None  # нет finish-маркера
+    assert brusnika._finish_from_tags(None) is None
+    assert brusnika._finish_from_tags([]) is None
+
+
+def test_brusnika_clean_settlement_strips_prefix():
+    assert brusnika._clean_settlement("Срок сдачи: 3 квартал 2026") == "3 квартал 2026"
+    assert brusnika._clean_settlement("2026-09-30") == "2026-09-30"
+    assert brusnika._clean_settlement(None) is None
+
+
+def test_brusnika_to_norm_basic():
+    fl = {"flat_id": "46500", "pk": "33055", "complex": "79",
+          "complex_name": "Квартал «Метроном»",
+          "building": "344", "building_name": "Дом 1",
+          "section": "868", "section_number": "11",
+          "floor": "30", "building_floors_count": "31",
+          "price": "20940000.0", "price_marketing": "17800000.00",
+          "price_old": "22040000.00",
+          "square": "29.3", "rooms": "0",
+          "completion_date": "2026-09-30",
+          "delivery_title": "Срок сдачи: 3 квартал 2026",
+          "page_url": "https://moskva.brusnika.ru/flat/46500/",
+          "is_booked": False,
+          "tags": ["Вид во двор", "Предчистовая отделка"]}
+    nf = brusnika._to_norm(fl)
+    assert nf.native_id == "46500"
+    assert nf.native_block_id == "79"
+    assert nf.rooms == 0  # студия
+    assert nf.area == 29.3
+    assert nf.floor == 30
+    assert nf.price == 17_800_000  # price_marketing
+    assert nf.old_price == 22_040_000  # price_old > price_marketing
+    assert nf.status == "free"
+    assert nf.bulk_name == "Дом 1"
+    assert nf.section_no == 11
+    assert nf.settlement_date == "3 квартал 2026"
+    assert nf.url == "https://moskva.brusnika.ru/flat/46500/"
+    assert nf.finish == "Предчистовая отделка"
+
+
+def test_brusnika_to_norm_booked_status():
+    fl = {"flat_id": "1", "complex": "1", "price": "5_000_000".replace("_", ""),
+          "square": "30", "rooms": "1", "is_booked": True}
+    nf = brusnika._to_norm(fl)
+    assert nf.status == "reserved"
+
+
+def test_brusnika_collect_region_prefixes_slug(monkeypatch):
+    pages = [{"results": [
+        {"flat_id": "1", "complex": "79", "complex_name": "Метроном",
+         "price": "10000000", "square": "30", "rooms": "1", "is_booked": False,
+         "tags": ["Без отделки"]},
+    ]}]
+    monkeypatch.setattr("pik.sources.brusnika.request_json",
+                        lambda s, m, u, **kw: pages.pop(0) if "/flats/" in u
+                        else [{"id": 79, "latitude": 55.81, "longitude": 37.75,
+                                "subway": [{"name": "Бульвар Рокоссовского"}]}])
+    result = brusnika._collect_region(brusnika.make_session(), "moskva", "msk")
+    assert len(result.flats) == 1
+    assert len(result.blocks) == 1
+    # native_block_id префиксирован регионом
+    assert result.flats[0].native_block_id == "moskva:79"
+    assert result.blocks[0].slug == "moskva:79"
+    assert result.blocks[0].meta["city"] == "msk"
+    assert result.blocks[0].meta["latitude"] == 55.81
+    assert result.blocks[0].meta["metro_name"] == "Бульвар Рокоссовского"
+
+
+def test_brusnika_region_failure_doesnt_break_others(monkeypatch):
+    """Сбой одного региона не валит весь Брусникин обход."""
+    from pik.sources.base import SourceError as _SE
+    def fake(session, region, city):
+        if region == "moskva":
+            raise _SE("boom")
+        return CollectResult(blocks=[NormBlock(native_id="x", name="X", slug="x")],
+                             flats=[])
+    monkeypatch.setattr("pik.sources.brusnika._collect_region", fake)
+    r = brusnika.collect()
+    # 11 регионов − 1 упал = 10 успешных, каждый дал 1 пустой блок
+    assert len(r.blocks) == 10
+
+
 def test_granel_collect_rejects_foreign_next_host(monkeypatch):
     """Если бэк вернул next с чужим доменом — НЕ должны за ним идти."""
     calls = []
