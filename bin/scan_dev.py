@@ -172,10 +172,12 @@ def main(argv: list[str] | None = None) -> int:
         scan_ts=now.isoformat(timespec="seconds"),
         workers=args.workers,
     )
-    # Источников всего ~6, и сбой одного — это потеря данных по целому
-    # застройщику за день. В отличие от bin/scan.py (десятки ЖК ПИК, где
-    # один флапнувший — не беда) здесь любой сбой обязан пометить юнит failed.
-    return 1 if failed else 0
+    # При 10+ источниках 1 флапнувший (типично Инград или MR Group с
+    # ServicePipe) — не повод пометить юнит failed: 9 из 10 успешно
+    # = вчерашний снимок остаётся, аналитика не страдает. Но 20%+
+    # сбоев = действительно что-то не так с сетью/прокси, ловим.
+    threshold = max(1, len(developers) // 5)
+    return 1 if failed > threshold else 0
 
 
 if __name__ == "__main__":

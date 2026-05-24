@@ -66,11 +66,20 @@ def test_main_succeeds_when_all_developers_ok(tmp_path, monkeypatch):
     assert rc == 0
 
 
-def test_main_fails_on_any_developer_failure(tmp_path, monkeypatch):
-    # источников мало — сбой даже одного это потеря данных по застройщику
-    # за сутки, юнит обязан стать failed
+def test_main_tolerates_one_flaky_source(tmp_path, monkeypatch):
+    # При 10 источниках 1 флапнувший (~10%) терпим — Инград/MR Group
+    # с ServicePipe регулярно отваливаются по таймауту, но юнит должен
+    # оставаться green. Вчерашний снимок этого застройщика остаётся.
     monkeypatch.setattr(scan_dev, "run_sweep", lambda *a, **k: 1)
-    monkeypatch.setattr(scan_dev, "SOURCES", dict.fromkeys("abcde"))
+    monkeypatch.setattr(scan_dev, "SOURCES", dict.fromkeys("abcdefghij"))  # 10
+    rc = scan_dev.main(["--db", str(tmp_path / "x.db"), "--all"])
+    assert rc == 0  # 1 of 10 = ниже 20% threshold
+
+
+def test_main_fails_on_many_failures(tmp_path, monkeypatch):
+    # 3 of 10 (30%) — что-то реально не так с сетью/прокси, юнит red
+    monkeypatch.setattr(scan_dev, "run_sweep", lambda *a, **k: 3)
+    monkeypatch.setattr(scan_dev, "SOURCES", dict.fromkeys("abcdefghij"))
     rc = scan_dev.main(["--db", str(tmp_path / "x.db"), "--all"])
     assert rc == 1
 

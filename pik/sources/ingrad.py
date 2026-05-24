@@ -147,8 +147,11 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
 
     page = 1
     for _ in range(_MAX_PAGES):
+        # API ингреда регулярно отвечает 30-60 сек на полный list — дефолт
+        # 40s даёт false-negative при нормальной работе. 90s + ретраи из
+        # request_json дают разумный шанс пройти медленный peak.
         payload = request_json(
-            s, "GET", _FLATS_URL,
+            s, "GET", _FLATS_URL, timeout=90.0,
             params={"numberElementsPage": _PAGE_SIZE, "page": page, "type": "flat"},
         )
         items = payload.get("list") or []
