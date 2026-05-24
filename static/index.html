@@ -265,6 +265,79 @@
     cursor: pointer;
     font-size: 13px;
   }
+  /* Боковая панель деталей квартиры */
+  .detail-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15,23,42,0.40);
+    z-index: 998;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s ease-out;
+  }
+  .detail-overlay.open { opacity: 1; pointer-events: auto; }
+  .detail-panel {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 540px; max-width: 96vw;
+    background: var(--card);
+    box-shadow: -4px 0 20px rgba(0,0,0,0.15);
+    z-index: 999;
+    transform: translateX(100%);
+    transition: transform 0.18s ease-out;
+    display: flex; flex-direction: column;
+  }
+  .detail-panel.open { transform: translateX(0); }
+  .detail-panel header.detail-head {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    background: var(--card);
+  }
+  .detail-panel header.detail-head h2 {
+    margin: 0; font-size: 17px; font-weight: 600; flex: 1;
+  }
+  .detail-panel .detail-close {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--muted); font-size: 22px; padding: 0 6px; line-height: 1;
+  }
+  .detail-panel .detail-close:hover { color: var(--fg); }
+  .detail-panel main.detail-body {
+    flex: 1; overflow-y: auto; padding: 16px 20px;
+  }
+  .detail-section { margin-bottom: 22px; }
+  .detail-section h3 {
+    margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--muted); font-weight: 600;
+  }
+  .detail-kv { display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px; font-size: 13px; }
+  .detail-kv .k { color: var(--muted); }
+  .detail-kv .v { font-variant-numeric: tabular-nums; }
+  .detail-price-row {
+    display: flex; align-items: baseline; gap: 12px;
+    font-size: 22px; font-weight: 600;
+  }
+  .detail-price-row .struck {
+    font-size: 14px; font-weight: 400;
+    color: var(--muted); text-decoration: line-through;
+  }
+  .detail-discount-badge {
+    display: inline-block; padding: 2px 8px; background: var(--promo-bg);
+    color: var(--promo); border-radius: 4px; font-size: 12px;
+    font-weight: 600;
+  }
+  .detail-plan { max-width: 100%; max-height: 280px; border: 1px solid var(--border); border-radius: 4px; background: white; }
+  .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .detail-actions a, .detail-actions button {
+    display: inline-block; padding: 7px 14px; font-size: 13px;
+    background: var(--accent); color: white;
+    border: none; border-radius: 6px; cursor: pointer;
+    text-decoration: none;
+  }
+  .detail-actions a.secondary, .detail-actions button.secondary {
+    background: var(--card); color: var(--fg); border: 1px solid var(--border);
+  }
+  .detail-chart {
+    width: 100%; height: 140px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: white;
+  }
 </style>
 </head>
 <body>
@@ -332,6 +405,16 @@
   <div id="grid"></div>
   <div id="map"><div class="map-placeholder">загрузка карты…</div></div>
 </main>
+
+<!-- Боковая панель деталей: открывается по клику на строку таблицы -->
+<div id="detailOverlay" class="detail-overlay" aria-hidden="true"></div>
+<aside id="detailPanel" class="detail-panel" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="detailTitle" tabindex="-1">
+  <header class="detail-head">
+    <h2 id="detailTitle">Квартира</h2>
+    <button class="detail-close" type="button" aria-label="Закрыть">✕</button>
+  </header>
+  <main class="detail-body" id="detailBody">загрузка…</main>
+</aside>
 
 <footer id="footer"></footer>
 
@@ -703,6 +786,239 @@ function renderSavedPanel() {
   panel.appendChild(actions);
 }
 
+// ─── Боковая панель деталей квартиры ─────────────────────────
+// Open by clicking row; close by ✕, ESC, или overlay click. Подгружает
+// историю цены этой квартиры через /pik/snapshots.json (отдельный fetch
+// на открытие — не предзагружаем для всех 20k чтобы не раздувать payload).
+let detailReqToken = 0;     // монотонный счётчик для отсева stale-ответов истории
+let detailReturnFocus = null;  // куда вернуть фокус при закрытии (a11y)
+
+function openDetail(row, trigger) {
+  if (!row) return;
+  const panel = document.getElementById("detailPanel");
+  const overlay = document.getElementById("detailOverlay");
+  detailReturnFocus = trigger || document.activeElement;
+  document.getElementById("detailTitle").textContent =
+    `${row["жк"]} · ${row["комнат"]} · ${Number(row["площадь_м²"]).toFixed(1)} м²`;
+  document.getElementById("detailBody").innerHTML = renderDetail(row);
+  panel.classList.add("open"); overlay.classList.add("open");
+  panel.setAttribute("aria-hidden", "false");
+  overlay.setAttribute("aria-hidden", "false");
+  loadPriceHistory(row.id);
+  panel.querySelector(".detail-close").focus();
+}
+function closeDetail() {
+  const panel = document.getElementById("detailPanel");
+  const overlay = document.getElementById("detailOverlay");
+  panel.classList.remove("open"); overlay.classList.remove("open");
+  panel.setAttribute("aria-hidden", "true");
+  overlay.setAttribute("aria-hidden", "true");
+  // Bump токен — любой in-flight loadPriceHistory отбросит свой ответ.
+  detailReqToken++;
+  // Очищаем body, иначе старый sparkline мелькнёт при повторном открытии.
+  const body = document.getElementById("detailBody");
+  if (body) body.innerHTML = "";
+  // Возвращаем фокус на trigger (a11y); если null — body, как было.
+  if (detailReturnFocus && typeof detailReturnFocus.focus === "function") {
+    try { detailReturnFocus.focus(); } catch (_) {}
+  }
+  detailReturnFocus = null;
+}
+
+// Минимальный focus trap внутри панели — Tab по кругу между focusable.
+function trapFocusInDetail(e) {
+  if (e.key !== "Tab") return;
+  const panel = document.getElementById("detailPanel");
+  if (!panel.classList.contains("open")) return;
+  const focusable = panel.querySelectorAll(
+    "a[href], button:not([disabled]), input, [tabindex]:not([tabindex='-1'])"
+  );
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault(); last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault(); first.focus();
+  }
+}
+
+// Только https/http — блокирует javascript:/data: атаки в href/src,
+// если когда-нибудь сторонний парсер засунет такое в ссылку/план.
+function safeUrl(s) {
+  if (s == null) return "";
+  const u = String(s).trim();
+  return /^https?:\/\//i.test(u) ? u : "";
+}
+
+function renderDetail(r) {
+  const fmtRub = (n) => n == null ? "—" : Number(n).toLocaleString("ru-RU") + " ₽";
+  // Number() гарантирует .toFixed работает даже если в БД попала строка
+  const fmtFix = (n, d = 1) => {
+    const x = Number(n); return Number.isFinite(x) ? x.toFixed(d) : "—";
+  };
+  // escape для произвольных не-числовых значений из БД (поля могут быть
+  // строками из HTML-парсинга сторонних застройщиков — доверять нельзя)
+  const E = (v) => escapeHtml(v == null ? "—" : String(v));
+  const Eraw = (v) => escapeHtml(String(v == null ? "" : v));
+  const base = r["базовая_цена"], program = r["цена_по_программе"];
+  const hasDisc = r["промо"] === 1 && base && program && base > program;
+  const discPct = Number(r["скидка_%"]) || 0;
+  const priceBlock = hasDisc
+    ? `<div class="detail-price-row">
+         <span>${E(fmtRub(program))}</span>
+         <span class="struck">${E(fmtRub(base))}</span>
+         ${discPct >= 0.5 ? `<span class="detail-discount-badge">−${discPct.toFixed(0)}%</span>` : ""}
+       </div>`
+    : `<div class="detail-price-row"><span>${E(fmtRub(base || program))}</span></div>`;
+  const ppm = r["база_за_м²"] || (base && r["площадь_м²"] ? Math.round(base/r["площадь_м²"]) : null);
+  const metroLine = r["метро"]
+    ? `${E(r["метро"])}${r["мин_пешком"] != null ? " · " + Eraw(r["мин_пешком"]) + " мин пешком" : ""}`
+    : "—";
+  const settle = fmtSettle(r["заселение"]) || "—";
+  const planUrl = safeUrl(r["планировка"]);
+  const siteUrl = safeUrl(r["ссылка"]);
+  const planImg = planUrl
+    ? `<img class="detail-plan" src="${escapeAttr(planUrl)}" alt="планировка" loading="lazy">`
+    : "";
+  const linkSite = siteUrl
+    ? `<a href="${escapeAttr(siteUrl)}" target="_blank" rel="noopener">Открыть на сайте</a>`
+    : "";
+  const linkHistory = Number.isFinite(Number(r.id))
+    ? `<a class="secondary" href="/flat.html?id=${Number(r.id)}" target="_blank" rel="noopener">График цены</a>`
+    : "";
+  const linkPlan = planUrl
+    ? `<a class="secondary" href="${escapeAttr(planUrl)}" target="_blank" rel="noopener">Открыть план</a>`
+    : "";
+  const floorStr = r["этаж"] != null
+    ? Eraw(r["этаж"]) + (r["этажей_всего"] != null ? " / " + Eraw(r["этажей_всего"]) : "")
+    : "—";
+  return `
+    <div class="detail-section">
+      ${priceBlock}
+      ${ppm ? `<div style="color:var(--muted);font-size:13px;margin-top:6px">${E(fmtRub(ppm))}/м²</div>` : ""}
+    </div>
+
+    <div class="detail-section">
+      <h3>История цены за 90 дней</h3>
+      <svg id="detailChart" class="detail-chart" viewBox="0 0 480 140" preserveAspectRatio="none"></svg>
+    </div>
+
+    ${planImg ? `<div class="detail-section"><h3>Планировка</h3>${planImg}</div>` : ""}
+
+    <div class="detail-section">
+      <h3>Локация</h3>
+      <div class="detail-kv">
+        <div class="k">Город</div><div class="v">${E(cityLabel(r["город"]))}</div>
+        <div class="k">Метро</div><div class="v">${metroLine}</div>
+        <div class="k">Линия</div><div class="v">${E(r["линия"])}</div>
+        <div class="k">Км от центра</div><div class="v">${r["км_от_центра"] != null ? fmtFix(r["км_от_центра"], 1) + " км" : "—"}</div>
+        <div class="k">Адрес</div><div class="v">${E(r["адрес"])}</div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Квартира</h3>
+      <div class="detail-kv">
+        <div class="k">Застройщик</div><div class="v">${E(r["застройщик"])}</div>
+        <div class="k">ЖК</div><div class="v">${E(r["жк"])}</div>
+        <div class="k">Корпус</div><div class="v">${E(r["корпус"])}</div>
+        <div class="k">Секция</div><div class="v">${E(r["секция"])}</div>
+        <div class="k">Этаж</div><div class="v">${floorStr}</div>
+        <div class="k">Площадь</div><div class="v">${r["площадь_м²"] != null ? fmtFix(r["площадь_м²"], 1) + " м²" : "—"}</div>
+        <div class="k">Отделка</div><div class="v">${E(r["отделка"])}</div>
+        <div class="k">Заселение</div><div class="v">${E(settle)}</div>
+        <div class="k">Артикул</div><div class="v">${E(r["артикул"])}</div>
+      </div>
+    </div>
+
+    <div class="detail-section detail-actions">
+      ${linkSite} ${linkHistory} ${linkPlan}
+    </div>
+  `;
+}
+
+// Простейшие escape-helper'ы (внутри HTML и в значениях атрибутов).
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+// История цены — последние 90 дней. Request token защищает от stale-ответа
+// (юзер быстро переключился на другую квартиру). _sort_desc + scan_date__gte
+// гарантируют именно СВЕЖИЕ 90 дней, не первые 200 ever.
+async function loadPriceHistory(flatId) {
+  const myToken = ++detailReqToken;
+  const svg = document.getElementById("detailChart");
+  if (!svg) return;
+  if (!Number.isFinite(Number(flatId))) return;
+  svg.innerHTML = `<text x="240" y="70" text-anchor="middle" fill="#94a3b8" font-size="12">загрузка…</text>`;
+  // ISO «90 дней назад», UTC — Datasette с SQLite сравнит лексикографически
+  const since = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
+  const url = `/pik/snapshots.json?flat_id=${Number(flatId)}` +
+              `&scan_date__gte=${since}` +
+              `&_sort_desc=scan_date&_size=200&_shape=array`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    let rows = await resp.json();
+    if (myToken !== detailReqToken) return;  // stale — другая квартира уже открыта
+    rows = rows.slice().reverse();  // _sort_desc → переворачиваем в ASC
+    if (!rows.length) {
+      svg.innerHTML = `<text x="240" y="70" text-anchor="middle" fill="#94a3b8" font-size="12">истории нет</text>`;
+      return;
+    }
+    drawSparkline(svg, rows);
+  } catch (e) {
+    if (myToken !== detailReqToken) return;
+    svg.innerHTML = `<text x="240" y="70" text-anchor="middle" fill="#94a3b8" font-size="12">ошибка: ${escapeHtml(e.message)}</text>`;
+  }
+}
+
+function drawSparkline(svg, snapshots) {
+  // snapshots: [{scan_date, price, ...}, ...] sorted asc
+  const W = 480, H = 140, PAD_L = 56, PAD_R = 16, PAD_T = 12, PAD_B = 24;
+  // scan_date — ISO «YYYY-MM-DD…»; берём первые 10 символов как day-bucket,
+  // не строим Date (избегаем TZ-сюрпризов между парсингом и подписями).
+  const data = snapshots
+    .filter(s => s.price != null && s.scan_date)
+    .map(s => ({
+      day: String(s.scan_date).slice(0, 10),
+      // дни от 1970-01-01 — целое, годится для линейной x-шкалы
+      x: Math.floor(Date.UTC(
+        +s.scan_date.slice(0, 4),
+        +s.scan_date.slice(5, 7) - 1,
+        +s.scan_date.slice(8, 10)
+      ) / 86400_000),
+      y: Number(s.price),
+    }))
+    .filter(d => Number.isFinite(d.x) && Number.isFinite(d.y));
+  if (data.length === 0) {
+    svg.innerHTML = `<text x="240" y="70" text-anchor="middle" fill="#94a3b8" font-size="12">нет данных по цене</text>`;
+    return;
+  }
+  const xs = data.map(d => d.x), ys = data.map(d => d.y);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const xRng = (xMax - xMin) || 1;
+  const yRng = (yMax - yMin) || 1;
+  const tx = (x) => PAD_L + (x - xMin) / xRng * (W - PAD_L - PAD_R);
+  const ty = (y) => H - PAD_B - (y - yMin) / yRng * (H - PAD_T - PAD_B);
+  const pts = data.map(d => `${tx(d.x).toFixed(1)},${ty(d.y).toFixed(1)}`).join(" ");
+  const fmtPriceShort = (n) => (n / 1e6).toFixed(1) + "М";
+  // При >60 точек кружочки сливаются — скрываем
+  const showDots = data.length <= 60;
+  const dayFirst = data[0].day, dayLast = data[data.length - 1].day;
+  svg.innerHTML = `
+    <polyline points="${pts}" fill="none" stroke="#2563eb" stroke-width="2"/>
+    ${showDots ? data.map(d => `<circle cx="${tx(d.x).toFixed(1)}" cy="${ty(d.y).toFixed(1)}" r="2.5" fill="#2563eb"/>`).join("") : ""}
+    <text x="6" y="${PAD_T + 4}" font-size="10" fill="#94a3b8">${fmtPriceShort(yMax)}</text>
+    <text x="6" y="${H - PAD_B + 2}" font-size="10" fill="#94a3b8">${fmtPriceShort(yMin)}</text>
+    <text x="${PAD_L}" y="${H - 6}" font-size="10" fill="#94a3b8">${escapeHtml(dayFirst)}</text>
+    <text x="${W - PAD_R}" y="${H - 6}" font-size="10" fill="#94a3b8" text-anchor="end">${escapeHtml(dayLast)}</text>
+  `;
+}
+
 // Generic debounce — на keystroke в полях цена/площадь applyFilter
 // пересобирает Tabulator (20k rows) или Yandex маркеры (130 ЖК) — без
 // дебаунса заметно лагает при наборе. 200 мс — комфорт vs реактивность.
@@ -1072,6 +1388,14 @@ async function load() {
     pagination: false,
     persistence: false,
   });
+  // Click по любой строке таблицы → открыть боковую панель деталей.
+  // Игнорируем клики по ссылкам/кнопкам внутри ячеек (План, Сайт, История).
+  table.on("rowClick", (e, row) => {
+    if (e.target && e.target.closest("a, button")) return;
+    // Если юзер выделил текст внутри ячейки — не открываем панель
+    if (window.getSelection && window.getSelection().toString().length) return;
+    openDetail(row.getData(), e.target && e.target.closest("tr") || e.target);
+  });
 
   table.on("tableBuilt", () => {
     applyColumnVisibility();
@@ -1129,6 +1453,27 @@ async function load() {
   document.querySelectorAll(".view-toggle button").forEach(b => {
     b.addEventListener("click", () => switchView(b.dataset.view));
   });
+  // Боковая панель деталей: закрытие
+  document.querySelector("#detailPanel .detail-close")
+    .addEventListener("click", closeDetail);
+  // Overlay click — закрываем ТОЛЬКО если mousedown тоже был на overlay
+  // (drag-select копирования из панели не должен закрывать).
+  const overlay = document.getElementById("detailOverlay");
+  let overlayDownOnSelf = false;
+  overlay.addEventListener("mousedown", (e) => {
+    overlayDownOnSelf = e.target === overlay;
+  });
+  overlay.addEventListener("click", (e) => {
+    if (overlayDownOnSelf && e.target === overlay) closeDetail();
+    overlayDownOnSelf = false;
+  });
+  document.addEventListener("keydown", (e) => {
+    const open = document.getElementById("detailPanel").classList.contains("open");
+    if (!open) return;
+    if (e.key === "Escape") closeDetail();
+    else trapFocusInDetail(e);
+  });
+
   // Сохранённые поиски: открыть/закрыть панель
   const savedBtn = document.getElementById("savedBtn");
   const savedPanel = document.getElementById("savedPanel");
