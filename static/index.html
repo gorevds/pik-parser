@@ -48,6 +48,22 @@
   header a { color: var(--accent); text-decoration: none; }
   header a:hover { text-decoration: underline; }
   main { padding: 16px 24px 24px; }
+  /* Sticky-полоса фильтров — остаётся видимой при прокрутке таблицы */
+  .controls-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg);
+    margin: -16px -24px 12px;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .reset-btn {
+    color: var(--accent);
+    background: transparent !important;
+    border: 1px solid transparent !important;
+  }
+  .reset-btn:hover { border-color: var(--accent) !important; }
   #grid {
     background: var(--card);
     border: 1px solid var(--border);
@@ -160,7 +176,7 @@
 </header>
 
 <main>
-  <div class="controls">
+  <div class="controls controls-sticky">
     <span>Застройщик:</span>
     <select id="devFilter"><option value="all">все</option></select>
     <span style="color:var(--muted);margin-left:8px">|</span>
@@ -177,6 +193,12 @@
     <button data-rooms="2к">2к</button>
     <button data-rooms="3к">3к</button>
     <span style="color:var(--muted);margin-left:8px">|</span>
+    <span>Цена:</span>
+    <input type="number" id="priceMin" placeholder="от" step="0.5" min="0" style="width:64px">
+    <span style="color:var(--muted)">—</span>
+    <input type="number" id="priceMax" placeholder="до" step="0.5" min="0" style="width:64px">
+    <span style="color:var(--muted)">млн ₽</span>
+    <span style="color:var(--muted);margin-left:8px">|</span>
     <span>Площадь:</span>
     <input type="number" id="areaMin" placeholder="от" step="1" min="0">
     <span style="color:var(--muted)">—</span>
@@ -184,6 +206,7 @@
     <span style="color:var(--muted)">м²</span>
     <span style="color:var(--muted);margin-left:8px">|</span>
     <label><input type="checkbox" id="promoOnly"> только со скидкой</label>
+    <button id="resetBtn" type="button" class="reset-btn">✕ Сбросить</button>
     <span style="margin-left:auto" class="cols-wrap">
       <button id="colsBtn" type="button">⚙ Колонки</button>
       <div id="colsPanel" class="cols-panel"></div>
@@ -269,9 +292,19 @@ const rowFormatter = (row) => {
   }
 };
 
+// 4_000_000_153_513 → "40153513": offset (1 цифра) + native (с лидирующими
+// нулями до 7 знаков). Глобальный id всё ещё используется в `/flat.html?id=`
+// (полная точность сохраняется), здесь только косметика в ячейке.
+const NS = 1_000_000_000_000;
+const shortId = (id) => {
+  if (id == null) return "";
+  const off = Math.floor(id / NS), nat = id % NS;
+  return off === 0 ? String(nat) : off + String(nat).padStart(7, "0");
+};
+
 const columns = [
   {title: "ID", field: "id", width: 100, hozAlign: "right", headerHozAlign: "right",
-   headerFilter: "input", formatter: (c) => String(c.getValue() ?? "")},
+   headerFilter: "input", formatter: (c) => shortId(c.getValue())},
   {title: "Застройщик", field: "застройщик", width: 120, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list", formatter: fmtDeveloper,
    headerFilterParams: {values: ["", "ПИК", "А101", "Донстрой", "Абсолют",
@@ -279,17 +312,18 @@ const columns = [
   {title: "Город", field: "город", width: 130, headerFilter: "input",
    formatter: (c) => cityLabel(c.getValue())},
   {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
-  {title: "Метро", field: "метро", width: 160, headerFilter: "input",
+  {title: "Метро", field: "метро", width: 175, headerFilter: "input",
    formatter: (c) => {
      const r = c.getRow().getData();
      const name = c.getValue();
      if (!name) return "";
      const type = r["тип_транспорта"];
-     const t = r["мин_пешком"];
      const typeMark = type && type !== "M" ? `<span class="metro-type">${type}</span>` : '';
-     const time = t ? ` <span style="color:var(--muted)">· ${t} мин</span>` : '';
-     return `${typeMark}${name}${time}`;
+     return `${typeMark}${name}`;
    }},
+  {title: "До метро", field: "мин_пешком", width: 95, hozAlign: "right", headerHozAlign: "right",
+   sorter: "number",
+   formatter: (c) => c.getValue() != null ? `${c.getValue()} мин` : ""},
   {title: "Линия", field: "линия", width: 165, headerFilter: "input"},
   {title: "Км от центра", field: "км_от_центра", width: 130, hozAlign: "right", headerHozAlign: "right",
    sorter: "number",
@@ -358,6 +392,8 @@ let currentDev = "all";
 let promoOnly = false;
 let areaMin = null;
 let areaMax = null;
+let priceMin = null;  // в МИЛЛИОНАХ ₽ (поле в шапке вводят как «5», «18»)
+let priceMax = null;
 const COLS_LS_KEY = "pik:hidden_cols:v1";
 const hiddenCols = new Set(JSON.parse(localStorage.getItem(COLS_LS_KEY) || "[]"));
 
@@ -370,6 +406,11 @@ function applyFilter() {
   if (promoOnly) rows = rows.filter(r => r["промо"] === 1);
   if (areaMin != null) rows = rows.filter(r => r["площадь_м²"] != null && r["площадь_м²"] >= areaMin);
   if (areaMax != null) rows = rows.filter(r => r["площадь_м²"] != null && r["площадь_м²"] <= areaMax);
+  // Цена в фильтре — миллионы; фильтруем по «итоговой» (с программой если есть,
+  // иначе базовой). Так пользователь ищет «что я реально заплачу».
+  const flatPrice = (r) => r["цена_по_программе"] || r["базовая_цена"];
+  if (priceMin != null) rows = rows.filter(r => flatPrice(r) != null && flatPrice(r) >= priceMin * 1e6);
+  if (priceMax != null) rows = rows.filter(r => flatPrice(r) != null && flatPrice(r) <= priceMax * 1e6);
   table.replaceData(rows);
   document.getElementById("stats").innerHTML = renderStats(rows);
   // Rebuild ЖК-dropdown to show only ЖК in the current city filter
@@ -542,6 +583,32 @@ async function load() {
       applyFilter();
     });
   });
+  // Цена от/до — оба поля живут синхронно
+  const onPriceChange = () => {
+    const a = document.getElementById("priceMin").value.trim();
+    const b = document.getElementById("priceMax").value.trim();
+    priceMin = a === "" ? null : Number(a);
+    priceMax = b === "" ? null : Number(b);
+    applyFilter();
+  };
+  document.getElementById("priceMin").addEventListener("input", onPriceChange);
+  document.getElementById("priceMax").addEventListener("input", onPriceChange);
+
+  // ✕ Сбросить — обнуляем все переменные, dropdown'ы и инпуты
+  document.getElementById("resetBtn").addEventListener("click", () => {
+    currentDev = currentCity = currentZk = currentRoom = "all";
+    promoOnly = false;
+    priceMin = priceMax = areaMin = areaMax = null;
+    for (const id of ["devFilter","cityFilter","zkFilter"])
+      document.getElementById(id).value = "all";
+    for (const id of ["priceMin","priceMax","areaMin","areaMax"])
+      document.getElementById(id).value = "";
+    document.getElementById("promoOnly").checked = false;
+    document.querySelectorAll(".controls button[data-rooms]").forEach(b =>
+      b.classList.toggle("active", b.dataset.rooms === "all"));
+    applyFilter();
+  });
+
   document.getElementById("promoOnly").addEventListener("change", (e) => {
     promoOnly = e.target.checked;
     applyFilter();
