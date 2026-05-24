@@ -338,6 +338,60 @@
     border: 1px solid var(--border); border-radius: 4px;
     background: white;
   }
+  /* Мобильная карточная вёрстка (вместо таблицы на узких экранах) */
+  #cardList { display: none; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    line-height: 1.45;
+    cursor: pointer;
+  }
+  .card.promo-card { background: var(--promo-bg); }
+  .card-head {
+    display: flex; align-items: baseline; gap: 8px;
+    margin-bottom: 6px;
+  }
+  .card-head .dev-tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    color: white; font-weight: 600; flex-shrink: 0;
+  }
+  .card-head .zhk { flex: 1; font-weight: 600; }
+  .card-price {
+    font-size: 17px; font-weight: 700; margin: 4px 0;
+  }
+  .card-price .struck {
+    font-size: 13px; font-weight: 400;
+    color: var(--muted); text-decoration: line-through; margin-left: 8px;
+  }
+  .card-meta {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px;
+    color: var(--muted); font-size: 12px; margin-top: 4px;
+  }
+  .card-meta b { color: var(--fg); font-weight: 500; }
+  @media (max-width: 768px) {
+    body { font-size: 13px; }
+    header { padding: 10px 12px; gap: 10px; }
+    header h1 { font-size: 14px; }
+    header .stats { font-size: 12px; gap: 10px; }
+    main { padding: 8px 12px 12px; }
+    .controls-sticky { margin: -8px -12px 8px; padding: 8px 12px; }
+    .controls { gap: 8px 10px; font-size: 12px; }
+    .controls input[type="number"] { width: 56px !important; }
+    /* Tabulator продолжает РАБОТАТЬ (display:none ломает его virtual-DOM
+       и table.download). Прячем через visibility+absolute — DOM активен,
+       layout считается, экспорт работает; карточки рендерим поверх. */
+    #grid { visibility: hidden !important; position: absolute !important;
+            left: -9999px !important; height: 0 !important; }
+    #cardList { display: block; }
+    #map { height: calc(100vh - 280px); min-height: 300px; }
+    .detail-panel { width: 100%; max-width: 100%; }
+    .detail-kv { grid-template-columns: 110px 1fr; }
+    .view-toggle { margin-right: 0; }
+  }
 </style>
 </head>
 <body>
@@ -407,6 +461,7 @@
     </span>
   </div>
   <div id="grid"></div>
+  <div id="cardList" aria-live="polite"></div>
   <div id="map"><div class="map-placeholder">загрузка карты…</div></div>
 </main>
 
@@ -1395,15 +1450,75 @@ function filteredRows() {
   return rows;
 }
 
+// Mobile-detection — гейт для тяжёлой работы: на desktop рендерить карточки
+// бессмысленно (CSS прячет их), на мобиле — обратное.
+const isMobile = () => window.matchMedia("(max-width: 768px)").matches;
+
 function applyFilter() {
   const rows = filteredRows();
   if (viewMode === "table") {
     table.replaceData(rows);
+    // Карточки рендерим ТОЛЬКО на мобилке (на desktop #cardList скрыт CSS,
+    // зачем плодить 80 DOM-узлов на каждый keystroke).
+    if (isMobile()) renderCardList(rows);
   } else if (viewMode === "map") {
     renderMapMarkers(rows);
   }
   document.getElementById("stats").innerHTML = renderStats(rows);
   rebuildZkDropdown(rows);
+}
+
+// Минималистичная карточка для мобильного. Показываем только то, что
+// помещается в палец: ЖК, площадь/комнаты, цена, метро, кнопки.
+// На мобиле лимит до 80 карточек (>80 — пользователь явно перефильтрует),
+// иначе DOM становится тяжёлым.
+function renderCardList(rows) {
+  const list = document.getElementById("cardList");
+  if (!list) return;
+  const limit = 80;
+  const items = rows.slice(0, limit);
+  if (!items.length) {
+    list.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted)">Ничего не найдено по фильтрам</div>`;
+    return;
+  }
+  const E = escapeHtml;
+  const html = items.map((r) => {
+    const color = DEV_COLORS[r["застройщик"]] || "#6b7280";
+    const base = r["базовая_цена"], program = r["цена_по_программе"];
+    const hasDisc = r["промо"] === 1 && base && program && base > program;
+    const priceTxt = hasDisc
+      ? `${(program/1e6).toFixed(2)} М ₽ <span class="struck">${(base/1e6).toFixed(2)} М</span>`
+      : `${((base||program||0)/1e6).toFixed(2)} М ₽`;
+    const metro = r["метро"]
+      ? `${E(r["метро"])}${r["мин_пешком"] != null ? " · " + r["мин_пешком"] + " мин" : ""}`
+      : "—";
+    const settle = fmtSettle(r["заселение"]) || "—";
+    const floor = r["этаж"] != null
+      ? r["этаж"] + (r["этажей_всего"] ? " / " + r["этажей_всего"] : "") + " эт"
+      : "—";
+    const rent = rentMonthly(r);
+    return (
+      `<div class="card${hasDisc ? " promo-card" : ""}" data-row-id="${Number(r.id)||0}">` +
+        `<div class="card-head">` +
+          `<span class="dev-tag" style="background:${color}">${E(r["застройщик"])}</span>` +
+          `<span class="zhk">${E(r["жк"])}</span>` +
+        `</div>` +
+        `<div class="card-price">${priceTxt}</div>` +
+        `<div class="card-meta">` +
+          `<div>${E(r["комнат"])} · <b>${Number(r["площадь_м²"]).toFixed(1)} м²</b></div>` +
+          `<div>${floor}</div>` +
+          `<div>🚇 <b>${metro}</b></div>` +
+          `<div>${settle}</div>` +
+          `<div>📐 ${E(r["отделка"] || "—")}</div>` +
+          `<div>${rent != null ? "~" + Math.round(rent/1000) + "к/мес" : ""}</div>` +
+        `</div>` +
+      `</div>`
+    );
+  }).join("");
+  const footer = rows.length > limit
+    ? `<div style="text-align:center;padding:14px;color:var(--muted);font-size:12px">+${rows.length - limit} ещё (уточни фильтры)</div>`
+    : "";
+  list.innerHTML = html + footer;
 }
 
 function buildColsPanel() {
@@ -1478,6 +1593,13 @@ function rebuildZkDropdown(rows) {
     opt.value = z; opt.textContent = z;
     if (z === prevValue) opt.selected = true;
     sel.appendChild(opt);
+  }
+  // Если выбранный ЖК исчез из пула (юзер сменил dev/city или применил
+  // saved-search с устаревшим ЖК) — сбрасываем И переменную, И select,
+  // чтобы фильтр не висел невидимым «по призраку».
+  if (prevValue !== "all" && !zks.includes(prevValue)) {
+    currentZk = "all";
+    sel.value = "all";
   }
 }
 
@@ -1567,6 +1689,17 @@ async function load() {
     if (window.getSelection && window.getSelection().toString().length) return;
     openDetail(row.getData(), e.target && e.target.closest("tr") || e.target);
   });
+  // Click на мобильной карточке: открыть detail-панель (тот же UX как desktop).
+  document.getElementById("cardList").addEventListener("click", (e) => {
+    const card = e.target.closest && e.target.closest(".card");
+    if (!card) return;
+    if (e.target.closest("a, button")) return;
+    if (window.getSelection && window.getSelection().toString().length) return;
+    const id = Number(card.dataset.rowId);
+    if (!id) return;
+    const row = allRows.find(r => r.id === id);
+    if (row) openDetail(row, card);
+  });
 
   table.on("tableBuilt", () => {
     applyColumnVisibility();
@@ -1635,6 +1768,17 @@ async function load() {
     const name = `квартиры-${date}${dev}${rooms}.csv`.replace(/\s+/g, "_");
     table.download("csv", name, { bom: true, delimiter: ";" });
   });
+  // Resize: при переходе desktop↔mobile перерендериваем карточки если
+  // нужно (CSS уже переключил видимость, а DOM-узлы могут быть пустые).
+  let resizeT;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => {
+      if (isMobile()) renderCardList(filteredRows());
+    }, 250);
+  });
+  // Первый рендер карточек если стартовали на мобилке
+  if (isMobile()) renderCardList(filteredRows());
   // Боковая панель деталей: закрытие
   document.querySelector("#detailPanel .detail-close")
     .addEventListener("click", closeDetail);
