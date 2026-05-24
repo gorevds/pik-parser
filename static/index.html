@@ -592,6 +592,21 @@ const columns = [
   // через подсветку строки .promo-row + значение в «Скидка %».)
   {title: "База ₽/м²", field: "база_за_м²", hozAlign: "right", headerHozAlign: "right",
    sorter: "number", formatter: fmtMeter, width: 155},
+  // Оценочная арендная ставка по моей модели (см. rentMonthly).
+  // field=id чтобы Tabulator пустил sorter; реально считаем на лету.
+  {title: "Аренда/мес", field: "id", hozAlign: "right", headerHozAlign: "right",
+   width: 130, headerSort: true,
+   sorter: (a, b, aRow, bRow) => {
+     const ra = rentMonthly(aRow.getData()) || 0;
+     const rb = rentMonthly(bRow.getData()) || 0;
+     return ra - rb;
+   },
+   tooltip: (e, c) => rentTooltip(c.getRow().getData()),
+   formatter: (c) => {
+     const rent = rentMonthly(c.getRow().getData());
+     return rent == null ? "" :
+       `<span style="color:#475569">~${Math.round(rent/1000)}к ₽</span>`;
+   }},
   {title: "Отделка", field: "отделка", width: 195,
    headerFilter: "list", headerFilterParams: {valuesLookup: "all", sortValuesList: "asc"}},
   {title: "Заселение", field: "заселение", width: 110, hozAlign: "center", headerHozAlign: "center",
@@ -795,6 +810,87 @@ function renderSavedPanel() {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
   actions.appendChild(input); actions.appendChild(saveBtn);
   panel.appendChild(actions);
+}
+
+// ─── Оценочная арендная ставка (порт Python-модели из аналитики) ─
+// Это ОЦЕНКА, не реальная ставка от арендатора. Используется как
+// сравнительный показатель «во сколько ориентировочно выйдет» — для
+// быстрого скана инвест-привлекательности.
+// Калибровано против Москвы 2026 для эконом/комфорт-новостроек.
+const RENT_BASE_M2 = { "студия": 1900, "1к": 1700, "2к": 1500, "3к": 1300,
+                       "4к": 1150, "5к": 1000, "6к": 900, "7к": 800, "8к": 700 };
+const RENT_CITY_F = { msk: 1.00, mo: 0.65, spb: 0.70, ekb: 0.50, kazan: 0.45,
+                       nn: 0.45, yaroslavl: 0.35, vladivostok: 0.55, khabarovsk: 0.45,
+                       novorossiisk: 0.40, "yuzhno-sakhalinsk": 0.50, "ulan-ude": 0.35,
+                       blagoveshchensk: 0.40, krasnodar: 0.50, tyumen: 0.45,
+                       obninsk: 0.40, kaluga: 0.35, ufa: 0.40, chelyabinsk: 0.40,
+                       other: 0.40 };
+const RENT_DEV_LIQ = { "ПИК": 1.05, "Донстрой": 1.03, "Level": 1.00, "А101": 0.98,
+                       "Абсолют": 0.96, "ГК ФСК": 0.98, "MR Group": 0.95 };
+
+function rentFactors(r) {
+  // Вынесено отдельно: и расчёт, и tooltip используют одни и те же
+  // множители (никакого рассинхрона при изменении логики).
+  const base = RENT_BASE_M2[r["комнат"]];
+  const area = Number(r["площадь_м²"]);
+  if (!base || !Number.isFinite(area) || area <= 0) return null;
+  const city = RENT_CITY_F[r["город"]] ?? 0.4;
+  let dist = 1.0;
+  const d = r["км_от_центра"];
+  if (d != null) {
+    dist = d < 3 ? 1.30 : d < 6 ? 1.20 : d < 10 ? 1.10
+         : d < 14 ? 1.00 : d < 22 ? 0.92 : 0.80;
+  }
+  let metro = 1.0;
+  const foot = r["мин_пешком"];
+  if (foot != null) {
+    metro = foot <= 5 ? 1.15 : foot <= 10 ? 1.10 : foot <= 15 ? 1.00 : 0.95;
+  }
+  let floor = 1.0;
+  const fl = r["этаж"], total = r["этажей_всего"];
+  if (fl != null) {
+    if (fl === 1) floor = 0.87;
+    else if (fl === 2) floor = 0.95;
+    else if (total && fl === total) floor = 0.94;
+    else if (total && total >= 16 && fl >= total - 1) floor = 0.96;
+    else if (fl >= 6 && fl <= 15) floor = 1.02;
+  }
+  const dev = RENT_DEV_LIQ[r["застройщик"]] ?? 1.0;
+  // Апартаменты сдаются на 5-10% дешевле (нет прописки, выше комм-платежи)
+  const apart = r["апартаменты"] ? 0.92 : 1.0;
+  return { base, area, city, dist, metro, floor, dev, apart };
+}
+
+function rentMonthly(r) {
+  const f = rentFactors(r);
+  if (!f) return null;
+  return Math.round(f.base * f.area * f.city * f.dist * f.metro * f.floor * f.dev * f.apart);
+}
+
+function rentTooltip(r) {
+  const f = rentFactors(r);
+  if (!f) return "недостаточно данных для оценки";
+  const rent = Math.round(f.base * f.area * f.city * f.dist * f.metro * f.floor * f.dev * f.apart);
+  // УСН-6% считается на gross-выручку, vacancy и opex — тоже от gross.
+  // Корректно: net = gross × (1 − vacancy − opex − tax) = gross × 0.77
+  const gross = rent * 12;
+  const net = Math.round(gross * (1 - 0.12 - 0.05 - 0.06));
+  // Yield от БАЗОВОЙ цены (инвестор cash платит за неё, а не за promo-price)
+  const flatPrice = r["базовая_цена"] || r["цена_по_программе"];
+  const yieldNet = flatPrice ? (net / flatPrice * 100).toFixed(1) : "?";
+  const apartLine = r["апартаменты"] ? `× апартаменты: ×${f.apart.toFixed(2)}\n` : "";
+  return (
+    `Оценка аренды ${rent.toLocaleString("ru-RU")} ₽/мес.\n\n` +
+    `База: ${f.base} ₽/м² × ${f.area.toFixed(1)} м²\n` +
+    `× город (${cityLabel(r["город"]) || "?"}): ×${f.city.toFixed(2)}\n` +
+    `× дистанция (${r["км_от_центра"] != null ? r["км_от_центра"].toFixed(1) + " км" : "?"}): ×${f.dist.toFixed(2)}\n` +
+    `× метро (${r["мин_пешком"] != null ? r["мин_пешком"] + " мин" : "?"}): ×${f.metro.toFixed(2)}\n` +
+    `× этаж: ×${f.floor.toFixed(2)}\n` +
+    `× застройщик (${r["застройщик"]}): ×${f.dev.toFixed(2)}\n` +
+    apartLine +
+    `\nЧистыми (vacancy 12% + opex 5% + УСН 6% от gross): ${(net/1e6).toFixed(2)}М ₽/год\n` +
+    `Доходность net от базовой цены: ${yieldNet}%`
+  );
 }
 
 // ─── Inline sparkline в колонке таблицы (последние 30 дней) ──
