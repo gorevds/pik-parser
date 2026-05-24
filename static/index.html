@@ -397,7 +397,11 @@
       <button id="savedBtn" type="button" class="reset-btn" style="color:var(--accent)">★ Сохранённые</button>
       <div id="savedPanel" class="saved-panel"></div>
     </span>
-    <span style="margin-left:auto" class="cols-wrap">
+    <button id="exportBtn" type="button" class="reset-btn" style="color:var(--accent);margin-left:auto"
+            title="Скачать текущую выборку в CSV (открывается в Excel)">
+      📥 CSV
+    </button>
+    <span class="cols-wrap">
       <button id="colsBtn" type="button">⚙ Колонки</button>
       <div id="colsPanel" class="cols-panel"></div>
     </span>
@@ -1619,6 +1623,17 @@ async function load() {
   // Toggle Таблица / Карта
   document.querySelectorAll(".view-toggle button").forEach(b => {
     b.addEventListener("click", () => switchView(b.dataset.view));
+  });
+  // CSV-экспорт текущей выборки. bom:true — Excel правильно откроет
+  // UTF-8 русские заголовки. Скачивается только то что сейчас в таблице
+  // (replaceData(filteredRows) гарантирует).
+  document.getElementById("exportBtn").addEventListener("click", () => {
+    if (!table) return;
+    const date = new Date().toISOString().slice(0, 10);
+    const dev = currentDev !== "all" ? "-" + currentDev : "";
+    const rooms = currentRoom !== "all" ? "-" + currentRoom : "";
+    const name = `квартиры-${date}${dev}${rooms}.csv`.replace(/\s+/g, "_");
+    table.download("csv", name, { bom: true, delimiter: ";" });
   });
   // Боковая панель деталей: закрытие
   document.querySelector("#detailPanel .detail-close")
