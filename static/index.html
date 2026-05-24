@@ -198,6 +198,73 @@
     color: var(--muted);
     font-size: 14px;
   }
+  /* Сохранённые поиски (фильтры в localStorage) */
+  .saved-wrap { position: relative; display: inline-block; }
+  .saved-panel {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 260px;
+    max-width: 340px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 0;
+    box-shadow: 0 6px 20px rgba(0,0,0,.08);
+    z-index: 200;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .saved-panel.open { display: block; }
+  .saved-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+  }
+  .saved-item:hover { background: #f1f5f9; }
+  .saved-item .label { flex: 1; }
+  .saved-item .del {
+    color: #94a3b8;
+    margin-left: 8px;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .saved-item .del:hover { color: #dc2626; background: #fef2f2; }
+  .saved-panel .saved-empty {
+    padding: 10px 14px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .saved-panel .saved-actions {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+    display: flex;
+    gap: 6px;
+  }
+  .saved-panel .saved-actions input {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .saved-panel .saved-actions button {
+    padding: 4px 10px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+  }
 </style>
 </head>
 <body>
@@ -253,6 +320,10 @@
     <label><input type="checkbox" id="promoOnly"> только со скидкой</label>
     <label><input type="checkbox" id="hideApart" checked> без апартаментов</label>
     <button id="resetBtn" type="button" class="reset-btn">✕ Сбросить</button>
+    <span class="saved-wrap">
+      <button id="savedBtn" type="button" class="reset-btn" style="color:var(--accent)">★ Сохранённые</button>
+      <div id="savedPanel" class="saved-panel"></div>
+    </span>
     <span style="margin-left:auto" class="cols-wrap">
       <button id="colsBtn" type="button">⚙ Колонки</button>
       <div id="colsPanel" class="cols-panel"></div>
@@ -475,6 +546,162 @@ let priceMin = null;  // в МИЛЛИОНАХ ₽ (поле в шапке вв�
 let priceMax = null;
 const COLS_LS_KEY = "pik:hidden_cols:v1";
 const hiddenCols = new Set(JSON.parse(localStorage.getItem(COLS_LS_KEY) || "[]"));
+
+// ─── Сохранённые поиски (localStorage) ───────────────────────
+// Хранит снапшоты состояния фильтров под понятным именем. Сохраняем
+// все 10 переменных-фильтров: dev/city/zk/room + price/area-from/to
+// + promoOnly + hideApart.
+const SAVED_LS_KEY = "pik:saved_searches:v1";
+
+// Приведение к Number с проверкой; не-число / NaN / Infinity → null.
+const numOrNull = (v) => {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+function readSaved() {
+  let raw;
+  try { raw = JSON.parse(localStorage.getItem(SAVED_LS_KEY) || "[]"); }
+  catch (_) { return []; }
+  if (!Array.isArray(raw)) return [];
+  // Защита от битых записей (старая схема, ручная правка storage)
+  return raw.filter(x =>
+    x && typeof x === "object" && typeof x.name === "string"
+    && x.filters && typeof x.filters === "object"
+  );
+}
+function writeSaved(list) {
+  // Quota / private-mode Safari / отключённый storage — silent-swallow,
+  // но в консоль предупреждение. Иначе click-handler упадёт и UI зависнет.
+  try {
+    localStorage.setItem(SAVED_LS_KEY, JSON.stringify(list));
+    return true;
+  } catch (e) {
+    console.warn("saved searches: не удалось записать", e);
+    return false;
+  }
+}
+function snapshotFilters() {
+  return {
+    dev: currentDev, city: currentCity, zk: currentZk, room: currentRoom,
+    priceMin, priceMax, areaMin, areaMax, promoOnly, hideApart,
+  };
+}
+function applySnapshot(s) {
+  currentDev = s.dev ?? "all";
+  currentCity = s.city ?? "all";
+  currentZk = s.zk ?? "all";
+  // комната: если значение из снапшота не соответствует кнопке в DOM
+  // (расширилась схема, шумная запись) — откатываем на "all", иначе ни
+  // одна кнопка не activated, фильтр висит «невидимым».
+  const wantedRoom = s.room ?? "all";
+  const roomBtns = [...document.querySelectorAll(".controls button[data-rooms]")];
+  currentRoom = roomBtns.some(b => b.dataset.rooms === wantedRoom) ? wantedRoom : "all";
+  // Числовые фильтры — через numOrNull, иначе строка "5,3" → NaN-фильтр
+  priceMin = numOrNull(s.priceMin);
+  priceMax = numOrNull(s.priceMax);
+  areaMin = numOrNull(s.areaMin);
+  areaMax = numOrNull(s.areaMax);
+  promoOnly = !!s.promoOnly;
+  // hideApart дефолт true (так же как стартовое значение приложения)
+  hideApart = s.hideApart !== undefined ? !!s.hideApart : true;
+  // Прокатываем по DOM
+  for (const [id, val] of [["devFilter", currentDev], ["cityFilter", currentCity]]) {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  }
+  // zk-dropdown пересоберётся rebuildZkDropdown'ом, но он берёт prevValue
+  // из sel.value — поэтому сначала кладём option на лету, чтобы DOM-state
+  // соответствовал переменной до пересборки.
+  const zkSel = document.getElementById("zkFilter");
+  if (zkSel && currentZk !== "all"
+      && ![...zkSel.options].some(o => o.value === currentZk)) {
+    const opt = document.createElement("option");
+    opt.value = currentZk; opt.textContent = currentZk;
+    zkSel.appendChild(opt);
+  }
+  if (zkSel) zkSel.value = currentZk;
+  for (const [id, val] of [["priceMin", priceMin], ["priceMax", priceMax],
+                            ["areaMin", areaMin], ["areaMax", areaMax]]) {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? "";
+  }
+  const p = document.getElementById("promoOnly");
+  if (p) p.checked = promoOnly;
+  const h = document.getElementById("hideApart");
+  if (h) h.checked = hideApart;
+  roomBtns.forEach(b =>
+    b.classList.toggle("active", b.dataset.rooms === currentRoom));
+  applyFilter();
+}
+
+function renderSavedPanel() {
+  const panel = document.getElementById("savedPanel");
+  const items = readSaved();
+  panel.innerHTML = "";
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "saved-empty";
+    empty.textContent = "Пока ничего не сохранено. Настрой фильтры и нажми «Сохранить».";
+    panel.appendChild(empty);
+  }
+  items.forEach((item, idx) => {
+    const row = document.createElement("div");
+    row.className = "saved-item";
+    const labelBtn = document.createElement("button");
+    labelBtn.type = "button";
+    labelBtn.className = "label";
+    labelBtn.style.cssText = "background:transparent;border:none;cursor:pointer;text-align:left;padding:0";
+    labelBtn.textContent = item.name;
+    labelBtn.addEventListener("click", () => {
+      applySnapshot(item.filters);
+      panel.classList.remove("open");
+    });
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "del";
+    del.textContent = "✕"; del.title = "Удалить";
+    del.style.cssText = "border:none;background:transparent;cursor:pointer";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const list = readSaved();
+      list.splice(idx, 1);
+      writeSaved(list);
+      renderSavedPanel();
+    });
+    row.appendChild(labelBtn); row.appendChild(del);
+    panel.appendChild(row);
+  });
+  // Форма «сохранить текущий»
+  const actions = document.createElement("div");
+  actions.className = "saved-actions";
+  const input = document.createElement("input");
+  input.type = "text"; input.placeholder = "название поиска";
+  input.maxLength = 50;
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button"; saveBtn.textContent = "Сохранить";
+  const save = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    const list = readSaved();
+    // если имя уже есть — обновляем (а не дублируем)
+    const existing = list.findIndex(x => x.name === name);
+    const entry = { name, filters: snapshotFilters(), at: Date.now() };
+    if (existing >= 0) list[existing] = entry;
+    else list.push(entry);
+    if (!writeSaved(list)) {
+      alert("Не удалось сохранить — браузер блокирует localStorage " +
+            "(приватный режим / квота исчерпана).");
+      return;
+    }
+    input.value = "";
+    renderSavedPanel();
+  };
+  saveBtn.addEventListener("click", save);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  actions.appendChild(input); actions.appendChild(saveBtn);
+  panel.appendChild(actions);
+}
 
 // Generic debounce — на keystroke в полях цена/площадь applyFilter
 // пересобирает Tabulator (20k rows) или Yandex маркеры (130 ЖК) — без
@@ -901,6 +1128,19 @@ async function load() {
   // Toggle Таблица / Карта
   document.querySelectorAll(".view-toggle button").forEach(b => {
     b.addEventListener("click", () => switchView(b.dataset.view));
+  });
+  // Сохранённые поиски: открыть/закрыть панель
+  const savedBtn = document.getElementById("savedBtn");
+  const savedPanel = document.getElementById("savedPanel");
+  savedBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!savedPanel.classList.contains("open")) renderSavedPanel();
+    savedPanel.classList.toggle("open");
+  });
+  document.addEventListener("click", (e) => {
+    if (!savedPanel.contains(e.target) && e.target !== savedBtn) {
+      savedPanel.classList.remove("open");
+    }
   });
 
   const onAreaChange = debounce(() => {
