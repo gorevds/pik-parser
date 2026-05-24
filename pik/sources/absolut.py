@@ -31,7 +31,8 @@ query allFlats($first: Int, $after: String, $orderBy: String) {
     pageInfo { endCursor hasNextPage }
     edges { node {
       pk number rooms area price originPrice hasDiscount facing
-      plan planPng buildingFloor mortgageMinRate
+      plan planPng mortgageMinRate
+      buildingFloor { number }
       project { slug name title }
       building { number completionYear completionQuarter }
       section { number }
@@ -117,9 +118,10 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
                 continue
             project = node["project"]
             blocks.setdefault(slug, project.get("name") or project.get("title") or slug)
-            # buildingFloor — per-flat поле «этаж в здании»; floors_max
-            # не отдаётся напрямую, агрегируем MAX как нижнюю оценку
-            bf = node.get("buildingFloor")
+            # buildingFloor — объект {number: int}; floors_max не отдаётся
+            # напрямую, агрегируем MAX(buildingFloor.number) как нижнюю оценку
+            bf_obj = node.get("buildingFloor") or {}
+            bf = bf_obj.get("number") if isinstance(bf_obj, dict) else None
             if isinstance(bf, int) and bf > 0:
                 block_floors[slug] = max(block_floors.get(slug, 0), bf)
             norm_flats.append(_to_norm(node))

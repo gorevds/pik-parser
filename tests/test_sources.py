@@ -214,9 +214,10 @@ def test_absolut_to_norm_extracts_plan_url():
 
 
 def test_absolut_collect_aggregates_floors_from_buildingFloor(monkeypatch):
-    """buildingFloor — per-flat «этаж в здании»; floors_max = MAX(buildingFloor)."""
+    """buildingFloor — объект {number}; floors_max = MAX(buildingFloor.number)."""
     def fake_node(pk, slug, bf):
-        return {"node": {"pk": pk, "price": 1.0, "buildingFloor": bf,
+        return {"node": {"pk": pk, "price": 1.0,
+                         "buildingFloor": {"number": bf},
                          "project": {"slug": slug, "name": slug},
                          "building": {}, "section": {}, "floor": {}}}
     pages = [{"data": {"allFlats": {"edges": [
