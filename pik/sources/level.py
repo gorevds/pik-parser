@@ -51,7 +51,13 @@ def _fetch_project_meta(session: requests.Session) -> dict[str, dict]:
     items = payload if isinstance(payload, list) else (payload.get("results") or [])
     for p in items:
         slug = p.get("slug")
-        if not slug:
+        # У Level ДВА slug-пространства: /api/flat/ отдаёт короткие коды
+        # («bauman», «akadem», «sav17»), а /api/project/ — полные имена
+        # («baumanskaya», «akademicheskaya», «savvinskaya-17»). short_slug
+        # — соединительное поле; кладём meta под обоими ключами, иначе
+        # 13 из 15 ЖК останутся без metro/координат.
+        short_slug = p.get("short_slug")
+        if not slug and not short_slug:
             continue
         meta: dict = {}
         if (lat_lng := _coords(p.get("coords"))):
@@ -66,7 +72,10 @@ def _fetch_project_meta(session: requests.Session) -> dict[str, dict]:
         tm = p.get("time_to_metro_min")
         if isinstance(tm, int):
             meta["metro_time_foot"] = tm
-        out[slug] = meta
+        if slug:
+            out[slug] = meta
+        if short_slug and short_slug != slug:
+            out[short_slug] = meta
     return out
 
 
