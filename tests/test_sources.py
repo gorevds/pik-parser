@@ -718,6 +718,116 @@ def test_granel_collect_upgrades_next_http_to_https(monkeypatch):
     assert flat_calls[1].startswith("https://")
 
 
+from pik.sources import ingrad  # noqa: E402
+
+
+def test_ingrad_coords_pair_rejects_none_string():
+    assert ingrad._coords_pair("55.83,37.92") == (55.83, 37.92)
+    assert ingrad._coords_pair("None") is None  # API даёт литерал «None»
+    assert ingrad._coords_pair(None) is None
+    assert ingrad._coords_pair("") is None
+    assert ingrad._coords_pair("bad") is None
+
+
+def test_ingrad_to_norm_filters_office_and_storeroom():
+    assert ingrad._to_norm({"type": "office", "estateId": {"code": "x"},
+                            "id": 1}) is None
+    assert ingrad._to_norm({"type": "flat", "isStoreroom": 1,
+                            "estateId": {"code": "x"}, "id": 1}) is None
+    nf = ingrad._to_norm({"type": "flat", "id": 1, "price": 5_000_000,
+                          "square": 30.0, "rooms": 1, "floorNum": 5,
+                          "number": "12", "status": "free", "finish": "WhiteBox",
+                          "link": "/projects/comfort/foo/flats/1/",
+                          "estateId": {"code": "foo", "name": "ЖК Foo"},
+                          "houseId": {"name": "К1", "floorsCount": 17,
+                                       "settlement_year": "2026", "settlement_quarter": "2"}})
+    assert nf is not None
+    assert nf.native_id == 1
+    assert nf.native_block_id == "foo"
+    assert nf.price == 5_000_000
+    assert nf.bulk_name == "К1"
+    # www.ingrad.ru канонический + без trailing slash (иначе 308 redirect)
+    assert nf.url == "https://www.ingrad.ru/projects/comfort/foo/flats/1"
+    assert nf.settlement_date == "2 кв. 2026"
+    assert nf.finish == "WhiteBox"
+
+
+def test_ingrad_to_norm_old_price_only_with_discount():
+    nf = ingrad._to_norm({"type": "flat", "id": 1,
+                          "estateId": {"code": "x"}, "houseId": {},
+                          "price": 8_000_000, "priceNoDiscount": 10_000_000,
+                          "square": 40, "rooms": 1, "status": "free"})
+    assert nf.old_price == 10_000_000
+    nf2 = ingrad._to_norm({"type": "flat", "id": 2,
+                           "estateId": {"code": "x"}, "houseId": {},
+                           "price": 8_000_000, "priceNoDiscount": 8_000_000,
+                           "square": 40, "rooms": 1, "status": "free"})
+    assert nf2.old_price is None
+
+
+def test_ingrad_second_house_fills_missing_coords(monkeypatch):
+    """Если первый корпус ЖК не дал координат — второй должен их «долить»."""
+    pages = [{"list": [
+        {"type": "flat", "id": 1, "price": 1, "square": 1, "rooms": 1,
+         "status": "free", "estateId": {"code": "z", "name": "Z"},
+         "houseId": {"name": "К1", "coords": "None"}},  # нет координат
+        {"type": "flat", "id": 2, "price": 1, "square": 1, "rooms": 1,
+         "status": "free", "estateId": {"code": "z", "name": "Z"},
+         "houseId": {"name": "К2", "coords": "55.7,37.5",
+                      "address": "Москва, ул. Y", "floorsCount": 25}},
+    ]}]
+    monkeypatch.setattr("pik.sources.ingrad.request_json",
+                        lambda *a, **k: pages.pop(0))
+    result = ingrad.collect()
+    b = result.blocks[0]
+    assert b.meta["latitude"] == 55.7
+    assert b.meta["longitude"] == 37.5
+    assert b.meta["address"] == "Москва, ул. Y"
+    assert b.meta["floors_max"] == 25
+
+
+def test_ingrad_skips_latin_metro_for_post_hoc_assignment():
+    """Latin-slug метро не пишем — пусть nearest-station post-hoc подберёт."""
+    estate = {"code": "x", "name": "X", "metro": "medvedkovo",
+              "timeToMetro": 10, "timeToMetroType": "foot"}
+    house = {"coords": "55.85,37.65"}
+    meta = ingrad._project_meta_from_estate_and_house(estate, house)
+    assert "metro_name" not in meta  # latin slug отброшен
+    # При кириллице — пишем
+    estate_cyr = {**estate, "metro": "Медведково"}
+    meta2 = ingrad._project_meta_from_estate_and_house(estate_cyr, house)
+    assert meta2["metro_name"] == "Медведково"
+    assert meta2["metro_time_foot"] == 10
+
+
+def test_ingrad_collect_aggregates_block_meta(monkeypatch):
+    pages = [{"list": [
+        {"type": "flat", "id": 1, "price": 5_000_000, "square": 30, "rooms": 1,
+         "status": "free", "number": "1", "link": "/p/foo/flats/1/",
+         "estateId": {"code": "foo", "name": "Foo", "metro": "Динамо",
+                       "timeToMetro": 7, "timeToMetroType": "foot"},
+         "houseId": {"name": "К1", "coords": "55.78,37.55", "floorsCount": 17,
+                      "address": "Москва, ул. X", "settlement_year": "2026",
+                      "settlement_quarter": "3"}},
+        {"type": "flat", "id": 2, "price": 6_000_000, "square": 35, "rooms": 2,
+         "status": "free", "link": "/p/foo/flats/2/",
+         "estateId": {"code": "foo", "name": "Foo"},
+         "houseId": {"name": "К2", "floorsCount": 22}},   # этажность больше → перебить
+        {"type": "office", "id": 99, "estateId": {"code": "foo"}, "houseId": {}},
+    ]}]
+    monkeypatch.setattr("pik.sources.ingrad.request_json",
+                        lambda *a, **k: pages.pop(0))
+    result = ingrad.collect()
+    assert len(result.flats) == 2  # офис отброшен
+    b = result.blocks[0]
+    assert b.slug == "foo"
+    assert b.meta["floors_max"] == 22  # max по корпусам
+    assert b.meta["latitude"] == 55.78
+    assert b.meta["address"] == "Москва, ул. X"
+    assert b.meta["metro_name"] == "Динамо"
+    assert b.meta["metro_time_foot"] == 7
+
+
 def test_granel_collect_rejects_foreign_next_host(monkeypatch):
     """Если бэк вернул next с чужим доменом — НЕ должны за ним идти."""
     calls = []

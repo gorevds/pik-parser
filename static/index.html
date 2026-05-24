@@ -575,6 +575,7 @@ const DEV_COLORS = {
   "ГК ФСК":   "#65a30d",
   "MR Group": "#0891b2",
   "Гранель":  "#9333ea",
+  "Инград":   "#0284c7",
 };
 const fmtDeveloper = (cell) => {
   const v = cell.getValue();
@@ -605,7 +606,7 @@ const columns = [
   {title: "Застройщик", field: "застройщик", width: 120, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list", formatter: fmtDeveloper,
    headerFilterParams: {values: ["", "ПИК", "А101", "Донстрой", "Абсолют",
-                                  "Level", "ГК ФСК", "MR Group", "Гранель"]}},
+                                  "Level", "ГК ФСК", "MR Group", "Гранель", "Инград"]}},
   {title: "Город", field: "город", width: 130, headerFilter: "input",
    formatter: (c) => cityLabel(c.getValue())},
   {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
