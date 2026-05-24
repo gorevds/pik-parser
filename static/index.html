@@ -599,11 +599,22 @@ const columns = [
    formatter: (c) => fmtSettle(c.getValue())},
   {title: "Статус", field: "статус", width: 100, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list", headerFilterParams: {valuesLookup: "all", sortValuesList: "asc"}},
+  {title: "30 дн", field: "id", hozAlign: "center", headerHozAlign: "center",
+   width: 100, headerSort: false,
+   tooltip: (e, c) => {
+     const h = sparklineByFlat[c.getValue()];
+     if (!h || h.length < 2) return "истории за 30 дней нет";
+     const first = h[0], last = h[h.length - 1];
+     const pct = first > 0 ? ((last - first) / first * 100).toFixed(1) : "?";
+     const arrow = last > first ? "↑" : last < first ? "↓" : "→";
+     return `${h.length} точек: от ${(first/1e6).toFixed(2)}М до ${(last/1e6).toFixed(2)}М (${arrow} ${pct}%)`;
+   },
+   formatter: (c) => renderInlineSparkline(sparklineByFlat[c.getValue()])},
   {title: "График", field: "id", hozAlign: "center", headerHozAlign: "center",
    width: 95, headerSort: false,
    formatter: (c) => {
      const id = c.getValue();
-     return id ? `<a href="/flat.html?id=${id}" target="_blank" rel="noopener">📈 история</a>` : "";
+     return id ? `<a href="/flat.html?id=${id}" target="_blank" rel="noopener">📈</a>` : "";
    }},
   {title: "План", field: "планировка", width: 80, hozAlign: "center", headerHozAlign: "center",
    headerSort: false,
@@ -784,6 +795,61 @@ function renderSavedPanel() {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
   actions.appendChild(input); actions.appendChild(saveBtn);
   panel.appendChild(actions);
+}
+
+// ─── Inline sparkline в колонке таблицы (последние 30 дней) ──
+// Lookup {flat_id → [price1, price2, ...]} наполняется async-ом из view
+// flat_sparkline_30d. До прихода данных формат-функция вернёт «·».
+const sparklineByFlat = Object.create(null);
+
+function renderInlineSparkline(history) {
+  if (!history || history.length < 2) {
+    return `<span style="color:#cbd5e1">·</span>`;
+  }
+  const W = 80, H = 22;
+  const yMin = Math.min(...history), yMax = Math.max(...history);
+  const yRng = (yMax - yMin) || 1;
+  const n = history.length;
+  const pts = history.map((y, i) =>
+    `${(i / (n - 1) * (W - 4) + 2).toFixed(1)},` +
+    `${(H - 2 - (y - yMin) / yRng * (H - 4)).toFixed(1)}`
+  ).join(" ");
+  // тренд: рост = красный (дороже), падение = зелёный (для покупателя)
+  const diff = history[n - 1] - history[0];
+  const color = diff > 0 ? "#dc2626" : diff < 0 ? "#16a34a" : "#94a3b8";
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" ` +
+    `style="display:block;margin:0 auto"><polyline points="${pts}" ` +
+    `fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+}
+
+async function loadSparklines() {
+  try {
+    // _size=25000 — лимит server max_returned_rows. У нас сейчас ~20k
+    // КВАРТИР, потенциал ~30k. Когда подойдём к границе — silent truncate
+    // (Datasette в _shape=array не возвращает флаг). Логируем.
+    const resp = await fetch("/pik/flat_sparkline_30d.json?_shape=array&_size=25000");
+    if (!resp.ok) { console.warn("sparklines: HTTP", resp.status); return; }
+    const rows = await resp.json();
+    if (rows.length >= 25000) {
+      console.warn("sparklines: достигнут лимит 25000, часть квартир без графика");
+    }
+    for (const r of rows) {
+      // Datasette сейчас отдаёт TEXT-колонку json_group_array как строку.
+      // Если в будущем парсит сам (плагин / 1.0+) — типа array; принимаем оба.
+      let prices = r.prices;
+      try {
+        if (typeof prices === "string") prices = JSON.parse(prices);
+      } catch (_) { continue; }
+      if (Array.isArray(prices) && prices.length >= 2) {
+        sparklineByFlat[r.flat_id] = prices;
+      }
+    }
+    // redraw БЕЗ force — не сбрасывает scroll/sort/filter, в Tabulator
+    // virtual-DOM этого достаточно для перерисовки видимых ячеек.
+    if (table) table.redraw();
+  } catch (e) {
+    console.warn("sparklines: load failed", e);
+  }
 }
 
 // ─── Боковая панель деталей квартиры ─────────────────────────
@@ -1390,6 +1456,11 @@ async function load() {
   });
   // Click по любой строке таблицы → открыть боковую панель деталей.
   // Игнорируем клики по ссылкам/кнопкам внутри ячеек (План, Сайт, История).
+  // Запускаем async-загрузку sparkline-данных в фоне — таблица сразу
+  // рендерится без графиков, через 1-2 сек ячейки колонки «30 дн»
+  // оживут (table.redraw(true) в конце loadSparklines).
+  loadSparklines();
+
   table.on("rowClick", (e, row) => {
     if (e.target && e.target.closest("a, button")) return;
     // Если юзер выделил текст внутри ячейки — не открываем панель

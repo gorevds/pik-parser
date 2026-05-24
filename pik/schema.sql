@@ -169,3 +169,22 @@ LEFT JOIN blocks b ON b.id = f.block_id;
 DROP VIEW IF EXISTS today_one_room;
 CREATE VIEW today_one_room AS
 SELECT * FROM today_all WHERE комнат = '1к';
+
+-- Для лэндинга: компактная история цены за 30 дней на каждую квартиру —
+-- одна строка на квартиру с массивом цен ASC по дате (sparkline в ячейке
+-- таблицы). 20k квартир × ~7 точек = ~140k данных, в gzip ~1-2 МБ.
+-- HAVING ≥2: одно-точечные записи (новые квартиры с одним сканом) бесполезны
+-- для sparkline, отсекаем сразу — иначе ~30% payload мусор.
+DROP VIEW IF EXISTS flat_sparkline_30d;
+CREATE VIEW flat_sparkline_30d AS
+SELECT
+    flat_id,
+    json_group_array(price) AS prices
+FROM (
+    SELECT flat_id, scan_date, price
+    FROM snapshots
+    WHERE scan_date >= date('now', '-30 days') AND price IS NOT NULL
+    ORDER BY flat_id, scan_date
+)
+GROUP BY flat_id
+HAVING COUNT(*) >= 2;
