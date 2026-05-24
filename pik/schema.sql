@@ -138,7 +138,10 @@ SELECT
     f.section_no              AS секция,
     f.floor                   AS этаж,
     f.area                    AS "площадь_м²",
-    s.price                   AS базовая_цена,
+    -- база = old_price если есть скидка, иначе текущая. У не-PIK с
+    -- discount (FSK/MR Group) raw price = ТЕКУЩАЯ, и без COALESCE «база» и
+    -- «с программой» показывали одно и то же — баг был визуально заметен.
+    COALESCE(s.old_price, s.price) AS базовая_цена,
     s.promo_price             AS "цена_по_программе",
     s.base_meter_price        AS "база_за_м²",
     s.meter_price             AS "по_программе_за_м²",
