@@ -82,6 +82,8 @@ def _to_norm(fl: dict, block_slug: str) -> NormFlat:
         finish=_finish_label(fl),
         number=fl.get("number"),
         plan_url=fl.get("plan"),  # абсолютный SVG cdn.fsk.ru
+        # crmObjectType бывает «Квартира» / «Апартамент» / др.
+        is_apartment=("апарт" in (fl.get("crmObjectType") or "").lower()),
     )
 
 

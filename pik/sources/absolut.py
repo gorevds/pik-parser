@@ -31,7 +31,7 @@ query allFlats($first: Int, $after: String, $orderBy: String) {
     pageInfo { endCursor hasNextPage }
     edges { node {
       pk number offerId rooms area price originPrice hasDiscount facing
-      plan planPng mortgageMinRate
+      plan planPng mortgageMinRate isApartment
       buildingFloor { number }
       project {
         slug name title address coords
@@ -118,6 +118,7 @@ def _to_norm(node: dict) -> NormFlat:
         finish="С отделкой" if node.get("facing") else "Без отделки",
         number=node.get("number"),
         plan_url=node.get("plan") or node.get("planPng"),
+        is_apartment=bool(node.get("isApartment")),
     )
 
 

@@ -125,6 +125,7 @@ def _to_norm(fl: dict) -> NormFlat:
         finish=fl.get("renovation"),
         number=fl.get("section_title"),
         plan_url=fl.get("plan") or fl.get("floor_plan"),
+        is_apartment=(fl.get("type_of_living_realty") == "apartment"),
     )
 
 

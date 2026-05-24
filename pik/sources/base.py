@@ -66,6 +66,7 @@ class NormFlat:
     finish: str | None = None
     number: str | None = None
     plan_url: str | None = None
+    is_apartment: bool = False
 
 
 @dataclass
@@ -169,6 +170,14 @@ def build_rows(
         })
 
     known_block_ids = {bp["block_id"] for bp in block_payloads}
+    # Эвристика «апартаменты» на уровне БЛОКА: имя ЖК содержит «апарт».
+    # Универсально работает для всех застройщиков (не зависит от
+    # специфических полей API), плюс источники могут пометить is_apartment
+    # на уровне квартиры из своих полей — берём OR.
+    block_apart_hint = {
+        to_global_id(developer, b.native_id): ("апарт" in (b.name or "").lower())
+        for b in result.blocks
+    }
 
     flat_rows: list[dict] = []
     snap_rows: list[dict] = []
@@ -201,6 +210,7 @@ def build_rows(
         disc_abs, disc_pct, has_promo = _detect_discount(price, f.old_price)
         rooms = f.rooms
 
+        is_apart = bool(f.is_apartment) or block_apart_hint.get(block_gid, False)
         flat_rows.append({
             "id": gid,
             "guid": str(f.native_id),
@@ -215,6 +225,7 @@ def build_rows(
                      if rooms is not None else None,
             "rooms_fact": rooms,
             "is_studio": 1 if rooms == 0 else 0,
+            "is_apartment": 1 if is_apart else 0,
             "area": area,
             "area_kitchen": None,
             "area_living": None,

@@ -122,6 +122,7 @@ def _parse_card(href: str, text: str, block_slug: str) -> NormFlat | None:
         settlement_date=settle_m.group(1).strip() if settle_m else None,
         url=_SITE + href + "/",
         number=code.rsplit("-", 1)[-1],
+        is_apartment=("апарт" in text.lower()),
     )
 
 

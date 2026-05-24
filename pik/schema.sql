@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS flats (
     rooms           TEXT,
     rooms_fact      INTEGER,
     is_studio       INTEGER,
+    is_apartment    INTEGER NOT NULL DEFAULT 0,  -- апартаменты (нежилой фонд)
     area            REAL,
     area_kitchen    REAL,
     area_living     REAL,
@@ -134,6 +135,7 @@ SELECT
         WHEN '-1'     THEN 'студия'
         ELSE f.rooms || 'к'
     END                       AS комнат,
+    f.is_apartment            AS апартаменты,
     f.bulk_name               AS корпус,
     f.section_no              AS секция,
     f.floor                   AS этаж,

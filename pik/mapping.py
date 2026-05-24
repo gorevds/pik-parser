@@ -73,6 +73,12 @@ def to_flat_row(item: dict, *, first_seen: str) -> dict:
         "rooms":           str(item["rooms"]) if item.get("rooms") is not None else None,
         "rooms_fact":      item.get("rooms_fact"),
         "is_studio":       item.get("is_studio"),
+        # PIK не отдаёт явного поля; эвристика по названию ЖК/корпуса
+        "is_apartment":    1 if any(
+            "апарт" in (s or "").lower()
+            for s in (bulk.get("name"), item.get("name"),
+                      (item.get("block") or {}).get("name"))
+        ) else 0,
         "area":            item.get("area"),
         "area_kitchen":    item.get("areaKitchen"),
         "area_living":     item.get("areaLiving"),

@@ -99,6 +99,76 @@ _CITY_NON_PIK_OTHER_FIX_SQL = (
 )
 
 
+def _migrate_flats(conn: sqlite3.Connection) -> None:
+    """is_apartment добавлена в 2026-05-25 — апартаменты (нежилой фонд)
+    обычно отдельный сегмент инвестиций."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(flats)")}
+    if not existing:
+        return
+    if "is_apartment" not in existing:
+        conn.execute(
+            "ALTER TABLE flats ADD COLUMN is_apartment INTEGER NOT NULL DEFAULT 0"
+        )
+
+
+def _assign_nearest_metro(conn: sqlite3.Connection) -> None:
+    """Для блоков с lat/lng без metro_name назначаем metro ближайшего блока,
+    у которого metro_name известен. Идемпотентно (не перезаписываем), ограничено
+    радиусом 5 км и итоговым временем 40 мин — иначе нет уверенности.
+
+    Источник «эталонных» точек: те же blocks, где источник API отдал metro
+    (PIK для всей Москвы, А101/Level/Абсолют для своих ЖК). FSK/Донстрой
+    закрываются этим post-hoc-апдейтом — у них есть координаты, но API
+    метро не отдают.
+    """
+    # Defensive — legacy-схемы (минимальные test-фикстуры) могут не иметь
+    # latitude/longitude/metro_name. Без них считать нечего.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(blocks)")}
+    if not {"latitude", "longitude", "metro_name"} <= cols:
+        return
+    orphans = conn.execute(
+        "SELECT id, latitude, longitude FROM blocks "
+        "WHERE metro_name IS NULL "
+        "  AND latitude IS NOT NULL AND longitude IS NOT NULL"
+    ).fetchall()
+    if not orphans:
+        return
+    refs = conn.execute(
+        "SELECT metro_name, metro_line_name, metro_line_type, metro_time_foot, "
+        "       latitude, longitude FROM blocks "
+        "WHERE metro_name IS NOT NULL "
+        "  AND latitude IS NOT NULL AND longitude IS NOT NULL"
+    ).fetchall()
+    if not refs:
+        return
+    from math import sin, cos, asin, sqrt, pi
+    def d(la1, lo1, la2, lo2):
+        p = pi/180
+        a = (0.5 - cos((la2-la1)*p)/2
+             + cos(la1*p) * cos(la2*p) * (1 - cos((lo2-lo1)*p)) / 2)
+        return 12742 * asin(sqrt(a))
+
+    updates = []
+    for oid, olat, olng in orphans:
+        nearest = min(refs, key=lambda r: d(olat, olng, r[4], r[5]))
+        dist_km = d(olat, olng, nearest[4], nearest[5])
+        if dist_km > 5:
+            continue   # слишком далеко — пусть остаётся NULL, чем гадать
+        ref_time = nearest[3] or 5
+        # время = собственное время блока-донора + пешком от orphan до него
+        # (12 мин/км ≈ 5 км/ч). Это верхняя оценка, не точная.
+        time_est = round(ref_time + dist_km * 12)
+        if time_est > 40:
+            continue
+        updates.append((nearest[0], nearest[1], nearest[2], time_est, oid))
+    if updates:
+        conn.executemany(
+            "UPDATE blocks SET metro_name=?, metro_line_name=?, "
+            "metro_line_type=?, metro_time_foot=? WHERE id=?",
+            updates,
+        )
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     # WAL: писатель (скан) и читатели (Datasette) не блокируют друг друга.
     # Режим персистентен в файле БД. Для :memory: PRAGMA молча остаётся
@@ -106,8 +176,13 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode=WAL")
     _migrate_snapshots(conn)
     _migrate_blocks(conn)
+    _migrate_flats(conn)
     sql = files("pik").joinpath("schema.sql").read_text(encoding="utf-8")
     conn.executescript(sql)
+    # Post-hoc: для FSK/Донстрой (есть lat/lng, нет metro в API) — назначаем
+    # nearest. Выполняется после executescript, чтобы view today_all уже
+    # подхватила свежие metro_name через b.metro_name.
+    _assign_nearest_metro(conn)
     conn.commit()
 
 
@@ -116,6 +191,7 @@ _FLAT_COLS = (
     "bulk_name", "section_no", "floor", "rooms", "rooms_fact", "is_studio",
     "area", "area_kitchen", "area_living", "number", "name", "url",
     "pdf_url", "plan_url", "ceiling_height", "settlement_date", "first_seen",
+    "is_apartment",
 )
 _SNAP_COLS = (
     "flat_id", "scan_date", "scan_ts", "status",
@@ -146,6 +222,12 @@ _SNAP_INSERT = _insert_sql(
 )
 
 
+# Колонки flats/snapshots, добавленные миграциями — у внешних вызывающих
+# (старые скан-модули или тесты) их в dict может не быть. Дополняем дефолтом
+# чтобы named-параметры sqlite3 не падали с ProgrammingError.
+_FLAT_DEFAULTS = {"is_apartment": 0}
+
+
 def upsert(
     conn: sqlite3.Connection,
     *,
@@ -155,6 +237,9 @@ def upsert(
     cur = conn.cursor()
     cur.execute("BEGIN")
     try:
+        for row in flats:
+            for k, v in _FLAT_DEFAULTS.items():
+                row.setdefault(k, v)
         cur.executemany(_FLATS_INSERT, list(flats))
         cur.executemany(_SNAP_INSERT, list(snapshots))
         conn.commit()
