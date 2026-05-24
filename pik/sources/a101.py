@@ -53,10 +53,12 @@ def _to_norm(fl: dict) -> NormFlat:
         bulk_name=(f"Корпус {building}" if building else None),
         section_no=_to_int(fl.get("section_number")),
         settlement_date=fl.get("stage_key_transfer_date"),
-        url=None,  # публичного per-flat URL в API нет
+        # per-flat страница на сайте: /kvartiry/<id>/ (проверено: 200 OK)
+        url=f"https://a101.ru/kvartiry/{fl['id']}/",
         finish="WhiteBox" if fl.get("whitebox") else None,
         number=str(fl["number"]) if fl.get("number") is not None
                else fl.get("article"),
+        plan_url=fl.get("floor_plan") or fl.get("big_layout_png"),
     )
 
 
@@ -65,6 +67,7 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     s = session or make_session()
     norm_flats: list[NormFlat] = []
     blocks: dict[str, str] = {}  # slug → project name
+    block_floors: dict[str, int] = {}  # slug → max(max_floor) по всем корпусам
 
     url: str | None = _FLATS_URL
     # Без явного `order`: сортировка по умолчанию у API детерминирована и
@@ -78,7 +81,11 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
         for fl in payload.get("results") or []:
             if not fl.get("id") or not fl.get("project_slug"):
                 continue
-            blocks.setdefault(fl["project_slug"], fl.get("project") or fl["project_slug"])
+            slug = fl["project_slug"]
+            blocks.setdefault(slug, fl.get("project") or slug)
+            mf = _to_int(fl.get("max_floor"))
+            if mf:
+                block_floors[slug] = max(block_floors.get(slug, 0), mf)
             norm_flats.append(_to_norm(fl))
         url = payload.get("next")
         if not url:
@@ -87,7 +94,8 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
         log.warning("А101: достигнут предел в %d страниц", _MAX_PAGES)
 
     norm_blocks = [
-        NormBlock(native_id=slug, name=name, slug=slug)
+        NormBlock(native_id=slug, name=name, slug=slug,
+                  meta={"floors_max": block_floors.get(slug)})
         for slug, name in blocks.items()
     ]
     log.info("А101: %d ЖК, %d квартир", len(norm_blocks), len(norm_flats))

@@ -71,6 +71,19 @@ def fetch_block(block_id: int, *, scan_date: str, scan_ts: str) -> BlockData:
             block_slug = (b.get("url") or "").strip("/") or None
         block_meta = extract_block_meta(items[0], slug=block_slug)
 
+    # v2 PIK API убрал bulk.floors из payload, и floors_max везде стал NULL —
+    # делаем нижнюю оценку: MAX(этаж) по всем квартирам ЖК. Если в ЖК есть
+    # квартира на 25-м этаже, дом точно не ниже 25.
+    if not block_meta.get("floors_max") and items:
+        floors = []
+        for it in items:
+            try:
+                floors.append(int(it.get("floor")))
+            except (TypeError, ValueError):
+                pass
+        if floors:
+            block_meta["floors_max"] = max(floors)
+
     return BlockData(
         block_id, len(items), flats, snaps, block_name, block_slug, block_meta
     )

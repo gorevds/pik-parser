@@ -65,6 +65,7 @@ class NormFlat:
     url: str | None = None
     finish: str | None = None
     number: str | None = None
+    plan_url: str | None = None
 
 
 @dataclass
@@ -210,7 +211,7 @@ def build_rows(
             "name": f.number,
             "url": f.url,
             "pdf_url": None,
-            "plan_url": None,
+            "plan_url": f.plan_url,
             "ceiling_height": None,
             "settlement_date": f.settlement_date,
             "first_seen": scan_date,

@@ -119,6 +119,17 @@ def test_build_rows_computes_meter_price_when_missing():
     assert snaps[0]["meter_price"] == 200_000
 
 
+def test_build_rows_passes_plan_url_through_to_flats():
+    result = CollectResult(
+        blocks=[NormBlock(native_id="b", name="ЖК", slug="b")],
+        flats=[NormFlat(native_id=1, native_block_id="b", rooms=1, area=40.0,
+                        floor=2, price=8_000_000,
+                        plan_url="https://cdn.example.com/plan.png")],
+    )
+    _, flats, _ = build_rows("Level", result, scan_date="d", scan_ts="t")
+    assert flats[0]["plan_url"] == "https://cdn.example.com/plan.png"
+
+
 def test_build_rows_drops_orphan_flat_without_registered_block():
     # квартира ссылается на ЖК, которого нет в blocks → её надо отбросить,
     # иначе в today_all она ошибочно прикинулась бы квартирой ПИК
@@ -271,6 +282,34 @@ def test_donstroy_to_norm_maps_real_fixture():
         "quarter7/korpus39/section1/floor4/flat260139017/"
 
 
+def test_donstroy_to_norm_builds_plan_url_from_relative_path():
+    nf = donstroy._to_norm({"id": "x", "project": "P", "price": 1,
+                            "plan": "/hydra/svg/apartment/10/b39/x.svg"})
+    assert nf.plan_url == "https://donstroy.moscow/hydra/svg/apartment/10/b39/x.svg"
+
+
+def test_donstroy_to_norm_passes_absolute_plan_url_through():
+    nf = donstroy._to_norm({"id": "x", "project": "P", "price": 1,
+                            "plan": "https://cdn.example.com/p.svg"})
+    assert nf.plan_url == "https://cdn.example.com/p.svg"
+
+
+def test_donstroy_collect_aggregates_floors_total_per_block(monkeypatch):
+    pages = {
+        1: [
+            {"id": "a", "project": "Символ", "price": 1, "floors_total": "15"},
+            {"id": "b", "project": "Символ", "price": 1, "floors_total": "27"},
+            {"id": "c", "project": "Жизнь",  "price": 1, "floors_total": "32"},
+        ],
+        2: [],
+    }
+    monkeypatch.setattr("pik.sources.donstroy.request_json",
+                        lambda s, m, u, *, json=None, **kw: {"flats": pages.get(json["page"], [])})
+    result = donstroy.collect()
+    floors = {b.name: b.meta.get("floors_max") for b in result.blocks}
+    assert floors == {"Символ": 27, "Жизнь": 32}
+
+
 def test_donstroy_to_norm_hides_price_on_request():
     norm = donstroy._to_norm({"id": "x", "project": "P", "price": 999,
                               "price_request": True})
@@ -313,6 +352,39 @@ def test_a101_to_norm_maps_real_fixture():
     assert norm.floor == 5
 
 
+def test_a101_to_norm_sets_per_flat_url_and_plan():
+    nf = a101._to_norm({"id": 41849, "project_slug": "p", "actual_price": 5_000_000,
+                        "floor_plan": "https://cdn.a101.ru/x/plan.png",
+                        "max_floor": 14})
+    assert nf.url == "https://a101.ru/kvartiry/41849/"
+    assert nf.plan_url == "https://cdn.a101.ru/x/plan.png"
+
+
+def test_a101_to_norm_plan_url_falls_back_to_big_layout():
+    nf = a101._to_norm({"id": 1, "project_slug": "p", "actual_price": 1,
+                        "floor_plan": None,
+                        "big_layout_png": "https://cdn.a101.ru/y/big.png"})
+    assert nf.plan_url == "https://cdn.a101.ru/y/big.png"
+
+
+def test_a101_collect_aggregates_floors_max_per_block(monkeypatch):
+    pages = [
+        {"results": [
+            {"id": 1, "project_slug": "родник", "project": "Родник",
+             "actual_price": 5_000_000, "max_floor": 9, "room": 1, "studio": False},
+            {"id": 2, "project_slug": "родник", "project": "Родник",
+             "actual_price": 6_000_000, "max_floor": 17, "room": 2, "studio": False},
+            {"id": 3, "project_slug": "лес",    "project": "Лес",
+             "actual_price": 4_000_000, "max_floor": 25, "room": 1, "studio": False},
+        ], "next": None},
+    ]
+    monkeypatch.setattr("pik.sources.a101.request_json",
+                        lambda *a, **k: pages.pop(0))
+    result = a101.collect()
+    floors = {b.slug: b.meta.get("floors_max") for b in result.blocks}
+    assert floors == {"родник": 17, "лес": 25}
+
+
 def test_a101_studio_flag_overrides_room_count():
     norm = a101._to_norm({"id": 1, "project_slug": "p", "room": 1,
                           "studio": True, "actual_price": 5_000_000})
@@ -352,6 +424,38 @@ def test_level_settlement_formats_quarter_and_year():
         == "1 кв. 2026"
     assert level._settlement({"completion_year": 2027}) == "2027"
     assert level._settlement({}) is None
+
+
+def test_level_section_no_parses_numeric_title():
+    assert level._section_no({"section_title": "2"}) == 2
+    assert level._section_no({"section_title": "1-1"}) is None  # составной → не int
+    assert level._section_no({"section_title": None}) is None
+    assert level._section_no({"section_title": ""}) is None
+
+
+def test_level_to_norm_sets_plan_url_prefers_plan_over_floor_plan():
+    nf = level._to_norm({"pk": 1, "project_slug": "p", "price": 1,
+                         "plan": "https://cdn.level.ru/a.png",
+                         "floor_plan": "https://cdn.level.ru/b.png"})
+    assert nf.plan_url == "https://cdn.level.ru/a.png"
+
+
+def test_level_collect_aggregates_floors_section_total_per_block(monkeypatch):
+    pages = [
+        {"results": [
+            {"pk": 1, "project_slug": "bauman", "project": "Bauman",
+             "price": 1, "floors_section_total": 9},
+            {"pk": 2, "project_slug": "bauman", "project": "Bauman",
+             "price": 1, "floors_section_total": 13},
+            {"pk": 3, "project_slug": "city",   "project": "City",
+             "price": 1, "floors_section_total": 22},
+        ], "next": None},
+    ]
+    monkeypatch.setattr("pik.sources.level.request_json",
+                        lambda *a, **k: pages.pop(0))
+    result = level.collect()
+    floors = {b.slug: b.meta.get("floors_max") for b in result.blocks}
+    assert floors == {"bauman": 13, "city": 22}
 
 
 def test_level_to_norm_maps_real_fixture():

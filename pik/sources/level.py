@@ -36,6 +36,21 @@ def _settlement(fl: dict) -> str | None:
     return str(year) if year else None
 
 
+def _section_no(fl: dict) -> int | None:
+    """section_title бывает простым числом («2») и составным («1-1»).
+
+    Парсим в int только цельные числовые, иначе оставляем None — иначе
+    int(«1-1») упадёт, и будет потеря данных по другим полям квартиры.
+    """
+    raw = fl.get("section_title")
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _to_norm(fl: dict) -> NormFlat:
     price = fl.get("price")
     old = fl.get("old_price")
@@ -53,11 +68,12 @@ def _to_norm(fl: dict) -> NormFlat:
         old_price=old_price,
         status="free" if fl.get("status") == 1 else str(fl.get("status")),
         bulk_name=(f"Корпус {building}" if building else None),
-        section_no=None,  # section_title у Level нечисловой ("1-1")
+        section_no=_section_no(fl),
         settlement_date=_settlement(fl),
         url=(_SITE + url) if url else None,
         finish=fl.get("renovation"),
         number=fl.get("section_title"),
+        plan_url=fl.get("plan") or fl.get("floor_plan"),
     )
 
 
@@ -66,6 +82,7 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     s = session or make_session()
     norm_flats: list[NormFlat] = []
     blocks: dict[str, str] = {}  # slug → project name
+    block_floors: dict[str, int] = {}  # slug → max(floors_section_total)
 
     url: str | None = _FLATS_URL
     params: dict | None = {"limit": _PAGE_LIMIT, "offset": 0}
@@ -77,6 +94,9 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
             if not fl.get("pk") or not slug:
                 continue
             blocks.setdefault(slug, fl.get("project") or slug)
+            fst = fl.get("floors_section_total")
+            if isinstance(fst, int) and fst > 0:
+                block_floors[slug] = max(block_floors.get(slug, 0), fst)
             norm_flats.append(_to_norm(fl))
         url = payload.get("next")
         if not url:
@@ -85,7 +105,8 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
         log.warning("Level: достигнут предел в %d страниц", _MAX_PAGES)
 
     norm_blocks = [
-        NormBlock(native_id=slug, name=name, slug=slug)
+        NormBlock(native_id=slug, name=name, slug=slug,
+                  meta={"floors_max": block_floors.get(slug)})
         for slug, name in blocks.items()
     ]
     log.info("Level: %d ЖК, %d квартир", len(norm_blocks), len(norm_flats))
