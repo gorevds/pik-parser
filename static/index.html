@@ -159,6 +159,45 @@
     font-size: 11px;
     margin-right: 4px;
   }
+  /* Переключатель «Таблица / Карта» */
+  .view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-right: 12px;
+  }
+  .view-toggle button {
+    background: var(--card);
+    border: none;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    border-right: 1px solid var(--border);
+  }
+  .view-toggle button:last-child { border-right: none; }
+  .view-toggle button.active {
+    background: var(--accent);
+    color: white;
+  }
+  #map {
+    display: none;
+    width: 100%;
+    height: calc(100vh - 230px);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .map-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--muted);
+    font-size: 14px;
+  }
 </style>
 </head>
 <body>
@@ -166,7 +205,13 @@
 <header>
   <h1>Цены на квартиры — топ-застройщики Москвы</h1>
   <div class="stats" id="stats">загрузка…</div>
-  <div style="margin-left:auto">
+  <div style="margin-left:auto;display:flex;align-items:center">
+    <div class="view-toggle" role="tablist" aria-label="Режим отображения">
+      <button type="button" role="tab" data-view="table" class="active"
+              aria-controls="grid" aria-selected="true">📋 Таблица</button>
+      <button type="button" role="tab" data-view="map"
+              aria-controls="map" aria-selected="false">🗺 Карта</button>
+    </div>
     <a href="/pik/today_all" target="_blank">сырые данные</a>
     ·
     <a href="/pik/snapshots?_sort_desc=scan_date" target="_blank">история</a>
@@ -214,6 +259,7 @@
     </span>
   </div>
   <div id="grid"></div>
+  <div id="map"><div class="map-placeholder">загрузка карты…</div></div>
 </main>
 
 <footer id="footer"></footer>
@@ -430,7 +476,199 @@ let priceMax = null;
 const COLS_LS_KEY = "pik:hidden_cols:v1";
 const hiddenCols = new Set(JSON.parse(localStorage.getItem(COLS_LS_KEY) || "[]"));
 
-function applyFilter() {
+// Generic debounce — на keystroke в полях цена/площадь applyFilter
+// пересобирает Tabulator (20k rows) или Yandex маркеры (130 ЖК) — без
+// дебаунса заметно лагает при наборе. 200 мс — комфорт vs реактивность.
+function debounce(fn, ms = 200) {
+  let t;
+  return function (...args) {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), ms);
+  };
+}
+
+// ─────────────────── КАРТА (Yandex Maps 2.1) ───────────────────
+// Принципы:
+// — ленивый load API (только когда пользователь впервые жмёт «Карта»);
+// — один маркер на ЖК (не на квартиру) — 130 ЖК помещаются без кластера;
+// — цвет маркера по avg ₽/м² (зелёный=дешевле, красный=дороже) в РАМКАХ
+//   текущего фильтра — динамический градиент;
+// — клик по маркеру → balloon с кнопкой «Открыть в таблице» (фильтрует ЖК).
+let viewMode = "table";
+let ymapsLoaded = false;
+let ymapsLoadPromise = null;
+let map = null;
+let blocksGeo = null;
+let blocksGeoPromise = null;
+
+function loadYmaps() {
+  if (ymapsLoaded) return Promise.resolve();
+  if (ymapsLoadPromise) return ymapsLoadPromise;
+  // 10-секундный fallback на случай CSP/блокировщика, где script.onerror
+  // не выстреливает (Chrome молча игнорит блок-by-CSP запрос).
+  ymapsLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://api-maps.yandex.ru/2.1/?lang=ru_RU";
+    s.async = true;
+    const timer = setTimeout(() => reject(new Error("таймаут загрузки карты")), 10000);
+    s.onload = () => ymaps.ready(() => {
+      clearTimeout(timer); ymapsLoaded = true; resolve();
+    });
+    s.onerror = () => { clearTimeout(timer); reject(new Error("ошибка загрузки Yandex Maps")); };
+    document.head.appendChild(s);
+  });
+  // При сбое — обнуляем кеш промиса, иначе повторный клик «🗺 Карта»
+  // вернёт тот же rejected-промис, и пользователь застрянет до перезагрузки.
+  ymapsLoadPromise.catch(() => { ymapsLoadPromise = null; });
+  return ymapsLoadPromise;
+}
+
+function loadBlocksGeo() {
+  if (blocksGeo) return Promise.resolve();
+  if (blocksGeoPromise) return blocksGeoPromise;
+  // _size=1000 — запас на рост (сейчас 130 ЖК); если упрёмся в лимит, логируем
+  blocksGeoPromise = fetch("/pik/blocks.json?_shape=array&_size=1000")
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(arr => {
+      if (arr.length >= 1000) console.warn("blocksGeo: достигнут лимит 1000");
+      blocksGeo = {};
+      for (const b of arr) {
+        if (b.latitude != null && b.longitude != null) blocksGeo[b.id] = b;
+      }
+    });
+  blocksGeoPromise.catch(() => { blocksGeoPromise = null; });
+  return blocksGeoPromise;
+}
+
+async function switchView(mode) {
+  if (mode === viewMode) return;
+  document.querySelectorAll(".view-toggle button").forEach(b => {
+    const active = b.dataset.view === mode;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-selected", active);
+  });
+  if (mode === "table") {
+    document.getElementById("map").style.display = "none";
+    document.getElementById("grid").style.display = "block";
+    viewMode = "table";
+    applyFilter();
+    return;
+  }
+  // === map ===
+  document.getElementById("grid").style.display = "none";
+  document.getElementById("map").style.display = "block";
+  viewMode = "map";
+  try {
+    await Promise.all([loadYmaps(), loadBlocksGeo()]);
+  } catch (e) {
+    document.getElementById("map").innerHTML =
+      `<div class="map-placeholder">Карта не загрузилась: ${e.message}.<br>` +
+      `Попробуй обновить страницу или вернись в таблицу.</div>`;
+    return;
+  }
+  // Пользователь мог переключиться обратно в таблицу пока шла загрузка
+  // карты — игнорируем результат, чтобы не инициализировать ymaps.Map
+  // в скрытом контейнере (там layout посчитается как 0x0 и сломается).
+  if (viewMode !== "map") return;
+  if (!map) {
+    map = new ymaps.Map("map", {
+      center: [55.752, 37.617], zoom: 10,
+      controls: ["zoomControl", "fullscreenControl"]
+    });
+  }
+  renderMapMarkers(filteredRows());
+}
+
+function renderMapMarkers(rows) {
+  if (!map || !blocksGeo) return;
+  map.geoObjects.removeAll();
+  // группировка квартир по ЖК (block_id) с пропуском неизвестных координат
+  const byBlock = new Map();
+  for (const r of rows) {
+    if (!blocksGeo[r.block_id]) continue;
+    if (!byBlock.has(r.block_id)) byBlock.set(r.block_id, []);
+    byBlock.get(r.block_id).push(r);
+  }
+  if (byBlock.size === 0) return;
+  // avg ₽/м² на ЖК
+  const flatPrice = (r) => r["цена_по_программе"] || r["базовая_цена"];
+  const stats = [];
+  for (const [bid, brs] of byBlock) {
+    const ppm = brs.map(r => flatPrice(r) / (r["площадь_м²"] || 1)).filter(x => x > 0);
+    if (!ppm.length) continue;
+    stats.push({
+      block: blocksGeo[bid],
+      count: brs.length,
+      minPrice: Math.min(...brs.map(flatPrice).filter(Boolean)),
+      avgPpm: ppm.reduce((a, b) => a + b, 0) / ppm.length,
+    });
+  }
+  if (!stats.length) return;
+  const ppms = stats.map(s => s.avgPpm);
+  const minPpm = Math.min(...ppms), maxPpm = Math.max(...ppms);
+  const range = (maxPpm - minPpm) || 1;
+  // экранирование для balloon HTML (имена ЖК могут иметь спецсимволы)
+  const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  for (const s of stats) {
+    // range=0 (все одинаковые) → нейтрально-синий, иначе 120°→0° (зелёный→красный)
+    const hue = range === 0 ? 210 : Math.round(120 * (1 - (s.avgPpm - minPpm) / range));
+    const color = `hsl(${hue},65%,45%)`;
+    const minP = (s.minPrice / 1e6).toFixed(1);
+    const avgP = Math.round(s.avgPpm).toLocaleString("ru-RU");
+    // Number(...) гарантия что id безопасен для интерполяции (XSS-defence)
+    const safeId = Number(s.block.id) || 0;
+    const marker = new ymaps.Placemark(
+      [s.block.latitude, s.block.longitude],
+      {
+        hintContent: `${esc(s.block.name)}: ${s.count} кв., от ${minP} М`,
+        balloonContent:
+          `<b>${esc(s.block.name)}</b><br>` +
+          `${s.count} квартир в выборке<br>` +
+          `от <b>${minP} М ₽</b><br>` +
+          `средняя <b>${avgP} ₽/м²</b><br>` +
+          `<button data-action="filter-block" data-block-id="${safeId}" ` +
+          `style="margin-top:6px;padding:4px 10px;background:#2563eb;color:white;` +
+          `border:none;border-radius:4px;cursor:pointer">Открыть в таблице</button>`,
+      },
+      { preset: "islands#circleIcon", iconColor: color }
+    );
+    map.geoObjects.add(marker);
+  }
+  // Одна точка → bounds нулевой площади → setBounds уходит в zoom 19. Лучше
+  // явно центрируем на район. Несколько точек — стандартный fit.
+  if (stats.length === 1) {
+    map.setCenter([stats[0].block.latitude, stats[0].block.longitude], 14);
+  } else {
+    try {
+      const b = map.geoObjects.getBounds();
+      if (b) map.setBounds(b, { checkZoomRange: true, zoomMargin: 40 });
+    } catch (_) {}
+  }
+}
+
+// Делегированный click на balloon-кнопке. data-block-id безопасен (Number()),
+// слушатель один на весь document — не утечёт при пересборке маркеров.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest && e.target.closest("[data-action='filter-block']");
+  if (!btn || !blocksGeo) return;
+  const blockId = Number(btn.dataset.blockId);
+  const zhk = (blocksGeo[blockId] || {}).name;
+  if (!zhk) return;
+  currentZk = zhk;
+  const sel = document.getElementById("zkFilter");
+  if (![...sel.options].some(o => o.value === zhk)) {
+    const opt = document.createElement("option");
+    opt.value = zhk; opt.textContent = zhk;
+    sel.appendChild(opt);
+  }
+  sel.value = zhk;
+  switchView("table");
+});
+
+// Вычисляет отфильтрованный набор; не трогает UI. Используется и таблицей,
+// и картой (карта тоже должна реагировать на фильтры).
+function filteredRows() {
   let rows = allRows;
   if (currentDev !== "all") rows = rows.filter(r => r["застройщик"] === currentDev);
   if (currentCity !== "all") rows = rows.filter(r => r["город"] === currentCity);
@@ -445,9 +683,17 @@ function applyFilter() {
   const flatPrice = (r) => r["цена_по_программе"] || r["базовая_цена"];
   if (priceMin != null) rows = rows.filter(r => flatPrice(r) != null && flatPrice(r) >= priceMin * 1e6);
   if (priceMax != null) rows = rows.filter(r => flatPrice(r) != null && flatPrice(r) <= priceMax * 1e6);
-  table.replaceData(rows);
+  return rows;
+}
+
+function applyFilter() {
+  const rows = filteredRows();
+  if (viewMode === "table") {
+    table.replaceData(rows);
+  } else if (viewMode === "map") {
+    renderMapMarkers(rows);
+  }
   document.getElementById("stats").innerHTML = renderStats(rows);
-  // Rebuild ЖК-dropdown to show only ЖК in the current city filter
   rebuildZkDropdown(rows);
 }
 
@@ -617,14 +863,14 @@ async function load() {
       applyFilter();
     });
   });
-  // Цена от/до — оба поля живут синхронно
-  const onPriceChange = () => {
+  // Цена от/до — оба поля живут синхронно, debounce на keystroke
+  const onPriceChange = debounce(() => {
     const a = document.getElementById("priceMin").value.trim();
     const b = document.getElementById("priceMax").value.trim();
     priceMin = a === "" ? null : Number(a);
     priceMax = b === "" ? null : Number(b);
     applyFilter();
-  };
+  });
   document.getElementById("priceMin").addEventListener("input", onPriceChange);
   document.getElementById("priceMax").addEventListener("input", onPriceChange);
 
@@ -652,14 +898,18 @@ async function load() {
     hideApart = e.target.checked;
     applyFilter();
   });
+  // Toggle Таблица / Карта
+  document.querySelectorAll(".view-toggle button").forEach(b => {
+    b.addEventListener("click", () => switchView(b.dataset.view));
+  });
 
-  const onAreaChange = () => {
+  const onAreaChange = debounce(() => {
     const minV = document.getElementById("areaMin").value.trim();
     const maxV = document.getElementById("areaMax").value.trim();
     areaMin = minV === "" ? null : Number(minV);
     areaMax = maxV === "" ? null : Number(maxV);
     applyFilter();
-  };
+  });
   document.getElementById("areaMin").addEventListener("input", onAreaChange);
   document.getElementById("areaMax").addEventListener("input", onAreaChange);
 
