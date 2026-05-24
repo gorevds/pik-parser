@@ -33,7 +33,10 @@ query allFlats($first: Int, $after: String, $orderBy: String) {
       pk number rooms area price originPrice hasDiscount facing
       plan planPng mortgageMinRate
       buildingFloor { number }
-      project { slug name title }
+      project {
+        slug name title address coords
+        projectmetroSet { walkingTime timeOnCar metro { name } }
+      }
       building { number completionYear completionQuarter }
       section { number }
       floor { number }
@@ -50,6 +53,33 @@ def _round_price(value) -> int | None:
         return round(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _project_meta(project: dict) -> dict:
+    """Метро/координаты/адрес из node.project (Абсолют GraphQL)."""
+    meta: dict = {}
+    coords = project.get("coords")
+    if coords and isinstance(coords, str) and "," in coords:
+        try:
+            lat, lng = coords.split(",", 1)
+            meta["latitude"] = float(lat.strip())
+            meta["longitude"] = float(lng.strip())
+        except (ValueError, AttributeError):
+            pass
+    if project.get("address"):
+        meta["address"] = project["address"]
+    primary = (project.get("projectmetroSet") or [None])[0]
+    if primary:
+        m = primary.get("metro") or {}
+        if m.get("name"):
+            meta["metro_name"] = m["name"]
+        wt = primary.get("walkingTime")
+        if isinstance(wt, int):
+            meta["metro_time_foot"] = wt
+        tc = primary.get("timeOnCar")
+        if isinstance(tc, int):
+            meta["metro_time_transport"] = tc
+    return meta
 
 
 def _settlement(building: dict) -> str | None:
@@ -95,6 +125,7 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     norm_flats: list[NormFlat] = []
     blocks: dict[str, str] = {}  # slug → project name
     block_floors: dict[str, int] = {}  # slug → max(buildingFloor)
+    project_meta: dict[str, dict] = {}  # slug → метро/координаты/адрес
 
     after: str | None = None
     for _ in range(_MAX_PAGES):
@@ -118,6 +149,9 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
                 continue
             project = node["project"]
             blocks.setdefault(slug, project.get("name") or project.get("title") or slug)
+            # project повторяется в каждом edge, парсим один раз на slug
+            if slug not in project_meta:
+                project_meta[slug] = _project_meta(project)
             # buildingFloor — объект {number: int}; floors_max не отдаётся
             # напрямую, агрегируем MAX(buildingFloor.number) как нижнюю оценку
             bf_obj = node.get("buildingFloor") or {}
@@ -133,8 +167,10 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
         log.warning("Абсолют: достигнут предел в %d страниц", _MAX_PAGES)
 
     norm_blocks = [
-        NormBlock(native_id=slug, name=name, slug=slug,
-                  meta={"floors_max": block_floors.get(slug)})
+        NormBlock(
+            native_id=slug, name=name, slug=slug,
+            meta={"floors_max": block_floors.get(slug), **project_meta.get(slug, {})},
+        )
         for slug, name in blocks.items()
     ]
     log.info("Абсолют: %d ЖК, %d квартир", len(norm_blocks), len(norm_flats))

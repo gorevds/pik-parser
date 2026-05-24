@@ -21,10 +21,45 @@ from pik.sources.base import (
 
 DEVELOPER = "А101"
 _FLATS_URL = "https://a101.ru/api/flats/"
+_PROJECTS_URL = "https://a101.ru/api/projects/"
+_PROJECT_URL_FMT = "https://a101.ru/api/projects/{slug}/"
 _PAGE_LIMIT = 1000
 _MAX_PAGES = 50  # предохранитель: 50 * 1000 квартир с большим запасом
 
 log = logging.getLogger("pik.sources.a101")
+
+
+def _coords(raw: str | None) -> tuple[float, float] | None:
+    """Парсит «55.601127,37.220517» → (lat, lng). API возвращает строкой."""
+    if not raw or "," not in raw:
+        return None
+    try:
+        lat, lng = raw.split(",", 1)
+        return float(lat.strip()), float(lng.strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def _project_meta_from_detail(p: dict) -> dict:
+    """Извлекает метро/координаты/адрес из /api/projects/<slug>/ payload.
+
+    metro_set: [{metro_station: {name, line_color}, time_on_foot, time_on_car}]
+    Берём первую станцию — это primary (ближайшая по умолчанию у А101).
+    """
+    meta: dict = {}
+    if (lat_lng := _coords(p.get("coords"))):
+        meta["latitude"], meta["longitude"] = lat_lng
+    if p.get("address"):
+        meta["address"] = p["address"]
+    primary = (p.get("metro_set") or [None])[0]
+    if primary:
+        station = primary.get("metro_station") or {}
+        if station.get("name"):
+            meta["metro_name"] = station["name"]
+        # time_on_foot null у проектов далеко от метро — fallback на time_on_car
+        meta["metro_time_foot"] = primary.get("time_on_foot")
+        meta["metro_time_transport"] = primary.get("time_on_car")
+    return meta
 
 
 def _to_int(value) -> int | None:
@@ -93,9 +128,26 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     else:
         log.warning("А101: достигнут предел в %d страниц", _MAX_PAGES)
 
+    # Метро/координаты/адрес — только в detail-эндпоинте проекта; list-эндпоинт
+    # отдаёт metro_set, но без coords. Тянем detail по каждому из 9 проектов
+    # — суммарно ~1 сек, делается раз в сутки.
+    project_meta: dict[str, dict] = {}
+    for slug in blocks:
+        try:
+            payload = request_json(
+                s, "GET", _PROJECT_URL_FMT.format(slug=slug)
+            )
+        except Exception as exc:  # noqa: BLE001 — один сбойный проект не должен валить весь скан
+            log.warning("А101: проект %s — meta не получена: %s", slug, exc)
+            project_meta[slug] = {}
+            continue
+        project_meta[slug] = _project_meta_from_detail(payload)
+
     norm_blocks = [
-        NormBlock(native_id=slug, name=name, slug=slug,
-                  meta={"floors_max": block_floors.get(slug)})
+        NormBlock(
+            native_id=slug, name=name, slug=slug,
+            meta={"floors_max": block_floors.get(slug), **project_meta.get(slug, {})},
+        )
         for slug, name in blocks.items()
     ]
     log.info("А101: %d ЖК, %d квартир", len(norm_blocks), len(norm_flats))

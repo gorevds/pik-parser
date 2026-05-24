@@ -16,7 +16,7 @@ from typing import Any, Callable
 import requests
 
 from pik.developers import ID_NAMESPACE, namespaced_id, stable_int_id
-from pik.geo import city_from_address
+from pik.geo import CITY_CENTERS, city_from_address, haversine_km
 
 
 log = logging.getLogger("pik.sources")
@@ -149,6 +149,17 @@ def build_rows(
         if city == "other":
             city = "msk"
         meta["city"] = city
+        # distance_km: если источник дал lat/lng, считаем сами — иначе колонка
+        # «км от центра» в today_all остаётся NULL у не-PIK.
+        if (meta.get("distance_km") is None
+                and meta.get("latitude") is not None
+                and meta.get("longitude") is not None
+                and city in CITY_CENTERS):
+            c_lat, c_lon = CITY_CENTERS[city]
+            meta["distance_km"] = round(
+                haversine_km(float(meta["latitude"]), float(meta["longitude"]),
+                             c_lat, c_lon), 1
+            )
         block_payloads.append({
             "block_id": to_global_id(developer, b.native_id),
             "name": b.name,

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from html import unescape
 
 import requests
 
@@ -21,11 +22,52 @@ from pik.sources.base import (
 
 DEVELOPER = "Level"
 _FLATS_URL = "https://level.ru/api/flat/"
+_PROJECTS_URL = "https://level.ru/api/project/"
 _SITE = "https://level.ru"
 _PAGE_LIMIT = 100   # limit>=500 у API таймаутит
 _MAX_PAGES = 60
 
 log = logging.getLogger("pik.sources.level")
+
+
+def _coords(raw: str | None) -> tuple[float, float] | None:
+    if not raw or "," not in raw:
+        return None
+    try:
+        lat, lng = raw.split(",", 1)
+        return float(lat.strip()), float(lng.strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def _fetch_project_meta(session: requests.Session) -> dict[str, dict]:
+    """{slug → meta} с метро/координатами/адресом. ОДИН HTTP-вызов на всё."""
+    out: dict[str, dict] = {}
+    try:
+        payload = request_json(session, "GET", _PROJECTS_URL, timeout=30.0)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Level: список проектов не получен: %s", exc)
+        return out
+    items = payload if isinstance(payload, list) else (payload.get("results") or [])
+    for p in items:
+        slug = p.get("slug")
+        if not slug:
+            continue
+        meta: dict = {}
+        if (lat_lng := _coords(p.get("coords"))):
+            meta["latitude"], meta["longitude"] = lat_lng
+        if p.get("address"):
+            # API возвращает «Большая Почтовая&nbsp;ул.» — расшифровываем
+            meta["address"] = unescape(p["address"]).replace("\xa0", " ")
+        metro = p.get("metro") or {}
+        if metro.get("name"):
+            meta["metro_name"] = metro.get("name")
+        # time_to_metro_min — int минут пешком
+        tm = p.get("time_to_metro_min")
+        if isinstance(tm, int):
+            meta["metro_time_foot"] = tm
+        out[slug] = meta
+    return out
 
 
 def _settlement(fl: dict) -> str | None:
@@ -104,9 +146,12 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     else:
         log.warning("Level: достигнут предел в %d страниц", _MAX_PAGES)
 
+    project_meta = _fetch_project_meta(s)
     norm_blocks = [
-        NormBlock(native_id=slug, name=name, slug=slug,
-                  meta={"floors_max": block_floors.get(slug)})
+        NormBlock(
+            native_id=slug, name=name, slug=slug,
+            meta={"floors_max": block_floors.get(slug), **project_meta.get(slug, {})},
+        )
         for slug, name in blocks.items()
     ]
     log.info("Level: %d ЖК, %d квартир", len(norm_blocks), len(norm_flats))

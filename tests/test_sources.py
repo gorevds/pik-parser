@@ -447,15 +447,19 @@ def test_a101_collect_follows_next_pagination(monkeypatch):
         {"results": [{**fl, "id": 99, "project_slug": "other", "project": "Другой"}],
          "next": None},
     ]
-    calls = []
+    flat_calls = []
 
     def fake_request_json(session, method, url, **kw):
-        calls.append(url)
-        return pages[len(calls) - 1]
+        # collect теперь дополнительно тянет /api/projects/<slug>/ — пусть
+        # вернётся пустой meta (без метро/координат), это не должно ломать тест.
+        if "/projects/" in url:
+            return {}
+        flat_calls.append(url)
+        return pages[len(flat_calls) - 1]
 
     monkeypatch.setattr("pik.sources.a101.request_json", fake_request_json)
     result = a101.collect()
-    assert len(calls) == 2  # прошли по `next`
+    assert len(flat_calls) == 2  # прошли по `next`
     assert len(result.flats) == 2
     assert {b.slug for b in result.blocks} == {"rodniye-kvartaly", "other"}
 
