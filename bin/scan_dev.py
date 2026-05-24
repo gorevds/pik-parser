@@ -22,7 +22,7 @@ from typing import Callable
 
 from pik.blocks_meta import upsert_block_meta
 from pik.developers import DEVELOPERS
-from pik.sources import a101, absolut, donstroy, fsk, level, mrgroup
+from pik.sources import a101, absolut, donstroy, fsk, granel, level, mrgroup
 from pik.sources.base import CollectResult, SourceError, build_rows
 from pik.store import apply_schema, upsert
 
@@ -37,6 +37,7 @@ SOURCES: dict[str, Callable[[], CollectResult]] = {
     level.DEVELOPER: level.collect,
     absolut.DEVELOPER: absolut.collect,
     mrgroup.DEVELOPER: mrgroup.collect,
+    granel.DEVELOPER: granel.collect,
 }
 
 # Имя каждого источника обязано быть в реестре pik.developers — иначе

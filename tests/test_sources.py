@@ -587,6 +587,150 @@ def test_absolut_collect_cursor_pagination(monkeypatch):
 # --- mrgroup ------------------------------------------------------------
 
 from pik.sources import mrgroup  # noqa: E402
+from pik.sources import granel  # noqa: E402
+
+
+def test_granel_coords_parses_string_pair():
+    assert granel._coords("55.83,37.92") == (55.83, 37.92)
+    assert granel._coords("  55.83 , 37.92  ") == (55.83, 37.92)
+    assert granel._coords(None) is None
+    assert granel._coords("bad") is None
+
+
+def test_granel_to_norm_basic():
+    fl = {"id": 4343, "project_slug": "new-ar", "project_full_name": "Новая АР",
+          "number": "82", "price": 6225277.08, "current_price": "4637196.20",
+          "show_price_discounted": True,
+          "area": 23.38, "rooms": 0, "floor": 2, "floor_count": 17,
+          "building": "3", "section": 2, "status": 1,
+          "completion_year": "2025", "completion_quarter": "4",
+          "finish_type": "without_finish",
+          "plan": "https://cdn/.../plan.svg"}
+    nf = granel._to_norm(fl)
+    assert nf.native_id == 4343
+    assert nf.native_block_id == "new-ar"
+    assert nf.price == 4637196  # round(4637196.20) → 4637196
+    assert nf.old_price == 6225277  # base > current → дисконт виден
+    assert nf.area == 23.38
+    assert nf.rooms == 0
+    assert nf.floor == 2
+    assert nf.bulk_name == "Корпус 3"
+    assert nf.section_no == 2
+    assert nf.settlement_date == "4 кв. 2025"
+    assert nf.finish == "Без отделки"
+    # URL обязательно с project_slug — /flats/<slug>/<id> (без trailing slash).
+    # Без slug API даёт 404 для всех 2763 квартир (проверено live в ревью).
+    assert nf.url == "https://granelle.ru/flats/new-ar/4343"
+    assert nf.plan_url.endswith("plan.svg")
+
+
+def test_granel_to_norm_no_discount_when_flag_false():
+    fl = {"id": 1, "project_slug": "p", "price": 5_000_000,
+          "current_price": "4_500_000".replace("_", ""),
+          "show_price_discounted": False, "area": 30, "rooms": 1,
+          "status": 1, "finish_type": "finish"}  # real API value
+    nf = granel._to_norm(fl)
+    assert nf.old_price is None  # флаг скидки отключён → не показываем
+    assert nf.finish == "С отделкой"
+
+
+def test_granel_finish_maps_actual_api_values():
+    """Гранель API отдаёт без подчёркивания/префикса 'with_': finish, whitebox."""
+    def f(t): return granel._to_norm({"id":1,"project_slug":"p","price":1,
+                                       "area":1,"finish_type":t}).finish
+    assert f("without_finish") == "Без отделки"
+    assert f("finish") == "С отделкой"
+    assert f("whitebox") == "WhiteBox"
+    assert f("unknown_new_value") is None  # неизвестное → None, не сырой текст
+
+
+def test_granel_to_norm_url_none_without_slug():
+    nf = granel._to_norm({"id": 4343, "price": 1, "area": 1})
+    assert nf.url is None  # нет project_slug → нет валидного URL
+
+
+def test_granel_project_meta_detects_non_msk_by_coords(monkeypatch):
+    """Уфимский ЖК не должен оказаться 'msk' с distance до Кремля."""
+    monkeypatch.setattr("pik.sources.granel.request_json",
+        lambda *a, **k: {"results": [
+            {"slug": "ufa-zhk", "coords": "54.72,56.02"},     # Уфа
+            {"slug": "msk-zhk", "coords": "55.75,37.61"},     # Москва
+            {"slug": "remote",  "coords": "70.00,90.00"},     # >80 км от любого
+        ]})
+    meta = granel._fetch_project_meta(granel.make_session())
+    assert meta["ufa-zhk"]["city"] == "ufa"
+    assert meta["msk-zhk"]["city"] == "msk"
+    assert "city" not in meta["remote"]  # дальше 80 км → не пытаемся угадать
+
+
+def test_granel_collect_follows_next_pagination(monkeypatch):
+    pages = [
+        {"results": [
+            {"id": 1, "project_slug": "alpha", "project": "Альфа",
+             "project_full_name": "ЖК Альфа", "price": 5_000_000,
+             "area": 30, "rooms": 1, "floor": 5, "floor_count": 9,
+             "status": 1, "finish_type": "with_finish"},
+        ], "next": "http://granelle.ru/api/flats/?offset=200"},
+        {"results": [
+            {"id": 2, "project_slug": "beta", "project": "Бета",
+             "project_full_name": "ЖК Бета", "price": 8_000_000,
+             "area": 45, "rooms": 2, "floor": 12, "floor_count": 17,
+             "status": 1, "finish_type": "white_box"},
+        ], "next": None},
+    ]
+    project_calls = []
+    def fake_request_json(session, method, url, **kw):
+        if "/projects/" in url:
+            project_calls.append(url)
+            return {"results": [
+                {"slug": "alpha", "coords": "55.83,37.92",
+                 "transport_access_point": {"time": 8, "transport_point": {"name": "Бабушкинская"}}},
+                {"slug": "beta",  "coords": "55.74,37.61",
+                 "transport_access_point": {"time": 15, "transport_point": {"name": "Динамо"}}},
+            ]}
+        return pages.pop(0)
+    monkeypatch.setattr("pik.sources.granel.request_json", fake_request_json)
+
+    result = granel.collect()
+    assert len(result.flats) == 2
+    assert {b.slug for b in result.blocks} == {"alpha", "beta"}
+    alpha = next(b for b in result.blocks if b.slug == "alpha")
+    assert alpha.meta["floors_max"] == 9
+    assert alpha.meta["metro_name"] == "Бабушкинская"
+    assert alpha.meta["metro_time_foot"] == 8
+    assert alpha.meta["latitude"] == 55.83
+    assert len(project_calls) == 1
+
+
+def test_granel_collect_upgrades_next_http_to_https(monkeypatch):
+    """API отдаёт next= http://… — нужно подменять на https, иначе MITM-risk."""
+    calls = []
+    def fake(session, method, url, **kw):
+        calls.append(url)
+        if "/projects/" in url: return {"results": []}
+        if "offset=200" in url: return {"results": [], "next": None}
+        return {"results": [], "next": "http://granelle.ru/api/flats/?offset=200"}
+    monkeypatch.setattr("pik.sources.granel.request_json", fake)
+    granel.collect()
+    # Второй вызов flats должен идти ПО HTTPS
+    flat_calls = [u for u in calls if "/flats/" in u]
+    assert len(flat_calls) == 2
+    assert flat_calls[1].startswith("https://")
+
+
+def test_granel_collect_rejects_foreign_next_host(monkeypatch):
+    """Если бэк вернул next с чужим доменом — НЕ должны за ним идти."""
+    calls = []
+    def fake(session, method, url, **kw):
+        calls.append(url)
+        if "/projects/" in url: return {"results": []}
+        return {"results": [], "next": "http://evil.example.com/api/flats/"}
+    monkeypatch.setattr("pik.sources.granel.request_json", fake)
+    granel.collect()
+    # Один flat-вызов (стартовый), второй должен быть отброшен с warning
+    flat_calls = [u for u in calls if "/flats/" in u]
+    assert len(flat_calls) == 1
+    assert "evil.example.com" not in (flat_calls[0] if flat_calls else "")
 
 
 def test_mrgroup_num_parses_spaced_decimal():
