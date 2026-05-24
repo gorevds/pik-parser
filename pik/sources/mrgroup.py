@@ -53,7 +53,7 @@ _ROOMS = re.compile(r"(\d+)-комнатн")
 _AREA = re.compile(r"(\d[\d ]*,\d+)\s*м²")          # «127,04 м²» — с запятой
 _PPM = re.compile(r"(\d[\d ]*)\s*₽/м²")              # «424 632 ₽/м²»
 _PRICE = re.compile(r"(\d[\d ]*(?:,\d+)?)\s*₽(?!/)")  # «53 945 211,17 ₽», не ₽/м²
-_FLOOR = re.compile(r"(\d+)/\d+\s*этаж")
+_FLOOR = re.compile(r"(\d+)/(\d+)\s*этаж")  # X/Y этаж — текущий и максимальный
 _SETTLEMENT = re.compile(r"([IVX]+\s*кв\.?\s*\d{4})")
 # Корпус — словом (может содержать цифру: «Норс 7») между суммой и «X/Y этаж»
 _BUILDING = re.compile(
@@ -159,7 +159,13 @@ def collect(
         if not page_flats:
             log.warning("MR Group: %s — 0 квартир (анти-бот или нет в продаже)", slug)
             continue
-        blocks.append(NormBlock(native_id=slug, name=name, slug=slug))
+        # «X/Y этаж» — Y это этажность; берём максимум по карточкам
+        # ЖК (≈ макс. этаж самого высокого корпуса).
+        totals = [int(m.group(2)) for m in _FLOOR.finditer(html)]
+        blocks.append(NormBlock(
+            native_id=slug, name=name, slug=slug,
+            meta={"floors_max": max(totals) if totals else None},
+        ))
         flats.extend(page_flats)
         log.info("MR Group: %s — %d квартир", slug, len(page_flats))
         time.sleep(sleep_sec)

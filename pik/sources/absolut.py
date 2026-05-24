@@ -31,6 +31,7 @@ query allFlats($first: Int, $after: String, $orderBy: String) {
     pageInfo { endCursor hasNextPage }
     edges { node {
       pk number rooms area price originPrice hasDiscount facing
+      plan planPng buildingFloor mortgageMinRate
       project { slug name title }
       building { number completionYear completionQuarter }
       section { number }
@@ -82,6 +83,7 @@ def _to_norm(node: dict) -> NormFlat:
         url=None,
         finish="С отделкой" if node.get("facing") else "Без отделки",
         number=node.get("number"),
+        plan_url=node.get("plan") or node.get("planPng"),
     )
 
 
@@ -91,6 +93,7 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
     s.headers.update({"Origin": "https://www.absrealty.ru"})
     norm_flats: list[NormFlat] = []
     blocks: dict[str, str] = {}  # slug → project name
+    block_floors: dict[str, int] = {}  # slug → max(buildingFloor)
 
     after: str | None = None
     for _ in range(_MAX_PAGES):
@@ -114,6 +117,11 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
                 continue
             project = node["project"]
             blocks.setdefault(slug, project.get("name") or project.get("title") or slug)
+            # buildingFloor — per-flat поле «этаж в здании»; floors_max
+            # не отдаётся напрямую, агрегируем MAX как нижнюю оценку
+            bf = node.get("buildingFloor")
+            if isinstance(bf, int) and bf > 0:
+                block_floors[slug] = max(block_floors.get(slug, 0), bf)
             norm_flats.append(_to_norm(node))
         page_info = conn.get("pageInfo") or {}
         if not page_info.get("hasNextPage"):
@@ -123,7 +131,8 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
         log.warning("Абсолют: достигнут предел в %d страниц", _MAX_PAGES)
 
     norm_blocks = [
-        NormBlock(native_id=slug, name=name, slug=slug)
+        NormBlock(native_id=slug, name=name, slug=slug,
+                  meta={"floors_max": block_floors.get(slug)})
         for slug, name in blocks.items()
     ]
     log.info("Абсолют: %d ЖК, %d квартир", len(norm_blocks), len(norm_flats))

@@ -185,6 +185,51 @@ def test_fsk_to_norm_maps_real_fixture():
     assert norm.old_price is None  # priceWoDiscount == price
 
 
+def test_fsk_to_norm_passes_plan_url_through():
+    fl = {"externalId": 1, "price": 1, "areaTotal": 1.0,
+          "plan": "https://cdn.fsk.ru/x.svg"}
+    assert fsk._to_norm(fl, "z").plan_url == "https://cdn.fsk.ru/x.svg"
+
+
+def test_fsk_collect_aggregates_floors_max_from_floor_numbers(monkeypatch):
+    """FSK API не отдаёт floors_max — оцениваем как MAX(floorNumber)."""
+    def fake(session, method, url, **kw):
+        if url.endswith("/complex/"):
+            return [{"slug": "z", "title": "Z", "city_id": 1, "flats": {"all": 3}}]
+        return [
+            {"externalId": 1, "price": 1, "areaTotal": 1, "floorNumber": 5},
+            {"externalId": 2, "price": 1, "areaTotal": 1, "floorNumber": 27},
+            {"externalId": 3, "price": 1, "areaTotal": 1, "floorNumber": 13},
+        ]
+    monkeypatch.setattr("pik.sources.fsk.request_json", fake)
+    result = fsk.collect()
+    assert result.blocks[0].meta.get("floors_max") == 27
+
+
+def test_absolut_to_norm_extracts_plan_url():
+    node = {"pk": "x", "project": {"slug": "p"}, "price": 1.0,
+            "building": {}, "section": {}, "floor": {},
+            "plan": "https://absrealty.ru/plan.png"}
+    assert absolut._to_norm(node).plan_url == "https://absrealty.ru/plan.png"
+
+
+def test_absolut_collect_aggregates_floors_from_buildingFloor(monkeypatch):
+    """buildingFloor — per-flat «этаж в здании»; floors_max = MAX(buildingFloor)."""
+    def fake_node(pk, slug, bf):
+        return {"node": {"pk": pk, "price": 1.0, "buildingFloor": bf,
+                         "project": {"slug": slug, "name": slug},
+                         "building": {}, "section": {}, "floor": {}}}
+    pages = [{"data": {"allFlats": {"edges": [
+        fake_node("a", "alpha", 9), fake_node("b", "alpha", 22),
+        fake_node("c", "beta",  14),
+    ], "pageInfo": {"endCursor": None, "hasNextPage": False}}}}]
+    monkeypatch.setattr("pik.sources.absolut.request_json",
+                        lambda *a, **k: pages.pop(0))
+    result = absolut.collect()
+    by_slug = {b.slug: b.meta.get("floors_max") for b in result.blocks}
+    assert by_slug == {"alpha": 22, "beta": 14}
+
+
 def test_fsk_to_norm_detects_discount():
     base = {"externalId": 1, "price": 9_000_000, "areaTotal": 50.0, "rooms": 2}
     with_disc = fsk._to_norm({**base, "priceWoDiscount": 10_000_000}, "z")

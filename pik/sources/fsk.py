@@ -75,6 +75,7 @@ def _to_norm(fl: dict, block_slug: str) -> NormFlat:
         url=f"https://fsk.ru/{block_slug}/flats",
         finish=_finish_label(fl),
         number=fl.get("number"),
+        plan_url=fl.get("plan"),  # абсолютный SVG cdn.fsk.ru
     )
 
 
@@ -111,6 +112,10 @@ def collect(
         items = raw if isinstance(raw, list) else (raw.get("data") or [])
         if not items:
             continue
+        # FSK API не отдаёт floors_max явно — оцениваем как MAX(floorNumber)
+        # по квартирам ЖК (нижняя граница реальной этажности здания).
+        floors = [_to_int(it.get("floorNumber")) for it in items]
+        floors = [f for f in floors if f]
         blocks.append(NormBlock(
             native_id=slug,
             name=c.get("title") or slug,
@@ -119,6 +124,7 @@ def collect(
                 "latitude": c.get("lat"),
                 "longitude": c.get("lng"),
                 "address": c.get("post_address"),
+                "floors_max": max(floors) if floors else None,
             },
         ))
         flats.extend(_to_norm(fl, slug) for fl in items)
