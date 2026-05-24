@@ -30,7 +30,7 @@ query allFlats($first: Int, $after: String, $orderBy: String) {
     totalCount
     pageInfo { endCursor hasNextPage }
     edges { node {
-      pk number rooms area price originPrice hasDiscount facing
+      pk number offerId rooms area price originPrice hasDiscount facing
       plan planPng mortgageMinRate
       buildingFloor { number }
       project {
@@ -111,7 +111,10 @@ def _to_norm(node: dict) -> NormFlat:
         bulk_name=(f"Корпус {bnum}" if bnum not in (None, "") else None),
         section_no=section.get("number"),
         settlement_date=_settlement(building),
-        url=None,
+        # per-flat URL: `?id={offerId}` — рабочий шаблон, проверено curl-ом
+        # (HTTP 200). offerId это «126644-22371», pk-UUID в URL не работает.
+        url=(f"https://www.absrealty.ru/flats/?id={node['offerId']}"
+             if node.get("offerId") else None),
         finish="С отделкой" if node.get("facing") else "Без отделки",
         number=node.get("number"),
         plan_url=node.get("plan") or node.get("planPng"),

@@ -59,8 +59,14 @@ def _to_norm(fl: dict, block_slug: str) -> NormFlat:
     old_price = wo_discount if (price and wo_discount and wo_discount > price) else None
     corpus = fl.get("corpus") if isinstance(fl.get("corpus"), dict) else {}
     section = fl.get("section") if isinstance(fl.get("section"), dict) else {}
+    native_id = fl.get("externalId") or fl.get("_id")
+    # per-flat URL: `?id={externalId}` — рабочий шаблон, проверено curl-ом.
+    # Раньше отдавали ссылку на листинг ЖК — пользователю было не понятно
+    # к какой квартире она ведёт.
+    url = (f"https://fsk.ru/{block_slug}/flats?id={native_id}"
+           if native_id else f"https://fsk.ru/{block_slug}/flats")
     return NormFlat(
-        native_id=fl.get("externalId") or fl.get("_id"),
+        native_id=native_id,
         native_block_id=block_slug,
         rooms=fl.get("rooms"),
         area=fl.get("areaTotal"),
@@ -72,7 +78,7 @@ def _to_norm(fl: dict, block_slug: str) -> NormFlat:
         bulk_name=(f"Корпус {corpus['number']}" if corpus.get("number") else None),
         section_no=_to_int(section.get("number")),
         settlement_date=corpus.get("dateDelivery"),
-        url=f"https://fsk.ru/{block_slug}/flats",
+        url=url,
         finish=_finish_label(fl),
         number=fl.get("number"),
         plan_url=fl.get("plan"),  # абсолютный SVG cdn.fsk.ru
