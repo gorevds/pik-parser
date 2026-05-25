@@ -153,6 +153,36 @@
     padding: 4px 8px;
     font-size: 12px;
   }
+  /* Расширенные фильтры — popover с range/select-полями */
+  .cols-panel label.range-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    white-space: nowrap;
+  }
+  .cols-panel .range-inputs { display: inline-flex; gap: 4px; }
+  .cols-panel .range-inputs input,
+  .cols-panel select {
+    width: 70px;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cols-panel select { width: auto; }
+  .more-filters-count {
+    display: none;
+    background: var(--accent);
+    color: white;
+    font-size: 11px;
+    padding: 0 6px;
+    border-radius: 10px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .more-filters-count.active { display: inline-block; }
   .metro-type {
     display: inline-block;
     color: var(--muted);
@@ -456,6 +486,60 @@
       📥 CSV
     </button>
     <span class="cols-wrap">
+      <button id="moreFiltersBtn" type="button">⚙ Все фильтры<span id="moreFiltersCount" class="more-filters-count">0</span></button>
+      <div id="moreFiltersPanel" class="cols-panel" style="min-width:300px">
+        <label class="range-label">
+          <span>До метро, мин:</span>
+          <span class="range-inputs">
+            <input type="number" id="metroMin" placeholder="от" min="0" max="120" step="1">
+            <input type="number" id="metroMax" placeholder="до" min="0" max="120" step="1">
+          </span>
+        </label>
+        <label class="range-label">
+          <span>Км от центра:</span>
+          <span class="range-inputs">
+            <input type="number" id="distMin" placeholder="от" min="0" step="0.5">
+            <input type="number" id="distMax" placeholder="до" min="0" step="0.5">
+          </span>
+        </label>
+        <label class="range-label">
+          <span>Этаж:</span>
+          <span class="range-inputs">
+            <input type="number" id="floorMin" placeholder="от" min="1" step="1">
+            <input type="number" id="floorMax" placeholder="до" min="1" step="1">
+          </span>
+        </label>
+        <label class="range-label">
+          <span>Заселение не позже:</span>
+          <select id="settleYearMax">
+            <option value="">— любое —</option>
+            <option value="2025">2025</option>
+            <option value="2026">2026</option>
+            <option value="2027">2027</option>
+            <option value="2028">2028</option>
+            <option value="2029">2029</option>
+            <option value="2030">2030+</option>
+          </select>
+        </label>
+        <label class="range-label">
+          <span>Отделка:</span>
+          <select id="finishFilter">
+            <option value="all">любая</option>
+            <option value="С отделкой">С отделкой</option>
+            <option value="С отделкой и мебелью">С отделкой и мебелью</option>
+            <option value="WhiteBox">WhiteBox</option>
+            <option value="Предчистовая отделка">Предчистовая отделка</option>
+            <option value="Без отделки">Без отделки</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="onlyFree"> только свободные (без брони)</label>
+        <label><input type="checkbox" id="hasMetro"> только с известным метро</label>
+        <div class="cols-actions">
+          <button type="button" id="moreFiltersReset">Сбросить эти</button>
+        </div>
+      </div>
+    </span>
+    <span class="cols-wrap">
       <button id="colsBtn" type="button">⚙ Колонки</button>
       <div id="colsPanel" class="cols-panel"></div>
     </span>
@@ -625,7 +709,10 @@ const columns = [
    }},
   {title: "До метро", field: "мин_пешком", width: 95, hozAlign: "right", headerHozAlign: "right",
    sorter: "number",
-   formatter: (c) => c.getValue() != null ? `${c.getValue()} мин` : ""},
+   // Если метро не известно — НЕ рендерим «0 мин» / «N мин» (это вводит
+   // в заблуждение, выглядит как «дом прямо на станции»). Helper выше
+   // молчит для отсутствующего метро и для нулевого/null времени.
+   formatter: (c) => metroTimeText(c.getRow().getData())},
   {title: "Линия", field: "линия", width: 165, headerFilter: "input"},
   {title: "Км от центра", field: "км_от_центра", width: 130, hozAlign: "right", headerHozAlign: "right",
    sorter: "number",
@@ -718,6 +805,33 @@ let areaMin = null;
 let areaMax = null;
 let priceMin = null;  // в МИЛЛИОНАХ ₽ (поле в шапке вводят как «5», «18»)
 let priceMax = null;
+// Расширенный набор (popover «Все фильтры»):
+let metroMin = null, metroMax = null;          // минут пешком до метро
+let distMin = null, distMax = null;            // км от центра
+let floorMin = null, floorMax = null;          // этаж от-до
+let settleYearMax = null;                      // заселение не позже (число года)
+let finishFilter = "all";                      // отделка (точное совпадение)
+let onlyFree = false;                          // только статус «свободные»
+let hasMetro = false;                          // только с известным метро
+
+// «{N} мин» или "" если станция/время не известны. До 2026-05-25 рендерили
+// «0 мин» даже когда метро вообще нет — путало юзеров (выглядело как «дом
+// прямо на станции»). Теперь молчим: нет метро → нет данных о времени.
+function metroTimeText(r) {
+  if (!r || !r["метро"]) return "";
+  const t = r["мин_пешком"];
+  if (t == null || t <= 0) return "";
+  return t + " мин";
+}
+
+// Парсим год заселения из произвольной строки источника. У PIK это
+// ISO-дата ("2027-10-31"), у Гранели — «3 кв. 2026», у Брусники — «3
+// квартал 2026», и т.д. Regex берёт первый 20XX-год — годится для всех.
+function settlementYear(s) {
+  if (!s) return null;
+  const m = String(s).match(/(20\d{2})/);
+  return m ? parseInt(m[1], 10) : null;
+}
 const COLS_LS_KEY = "pik:hidden_cols:v1";
 const hiddenCols = new Set(JSON.parse(localStorage.getItem(COLS_LS_KEY) || "[]"));
 
@@ -760,6 +874,8 @@ function snapshotFilters() {
   return {
     dev: currentDev, city: currentCity, zk: currentZk, room: currentRoom,
     priceMin, priceMax, areaMin, areaMax, promoOnly, hideApart,
+    metroMin, metroMax, distMin, distMax, floorMin, floorMax,
+    settleYearMax, finishFilter, onlyFree, hasMetro,
   };
 }
 function applySnapshot(s) {
@@ -780,6 +896,17 @@ function applySnapshot(s) {
   promoOnly = !!s.promoOnly;
   // hideApart дефолт true (так же как стартовое значение приложения)
   hideApart = s.hideApart !== undefined ? !!s.hideApart : true;
+  // Расширенный набор фильтров — все опциональны, отсутствие = null/false/"all"
+  metroMin = numOrNull(s.metroMin);
+  metroMax = numOrNull(s.metroMax);
+  distMin = numOrNull(s.distMin);
+  distMax = numOrNull(s.distMax);
+  floorMin = numOrNull(s.floorMin);
+  floorMax = numOrNull(s.floorMax);
+  settleYearMax = numOrNull(s.settleYearMax);
+  finishFilter = typeof s.finishFilter === "string" && s.finishFilter ? s.finishFilter : "all";
+  onlyFree = !!s.onlyFree;
+  hasMetro = !!s.hasMetro;
   // Прокатываем по DOM
   for (const [id, val] of [["devFilter", currentDev], ["cityFilter", currentCity]]) {
     const el = document.getElementById(id);
@@ -797,7 +924,10 @@ function applySnapshot(s) {
   }
   if (zkSel) zkSel.value = currentZk;
   for (const [id, val] of [["priceMin", priceMin], ["priceMax", priceMax],
-                            ["areaMin", areaMin], ["areaMax", areaMax]]) {
+                            ["areaMin", areaMin], ["areaMax", areaMax],
+                            ["metroMin", metroMin], ["metroMax", metroMax],
+                            ["distMin", distMin], ["distMax", distMax],
+                            ["floorMin", floorMin], ["floorMax", floorMax]]) {
     const el = document.getElementById(id);
     if (el) el.value = val ?? "";
   }
@@ -805,8 +935,17 @@ function applySnapshot(s) {
   if (p) p.checked = promoOnly;
   const h = document.getElementById("hideApart");
   if (h) h.checked = hideApart;
+  const sy = document.getElementById("settleYearMax");
+  if (sy) sy.value = settleYearMax ?? "";
+  const ff = document.getElementById("finishFilter");
+  if (ff) ff.value = finishFilter;
+  const of = document.getElementById("onlyFree");
+  if (of) of.checked = onlyFree;
+  const hm = document.getElementById("hasMetro");
+  if (hm) hm.checked = hasMetro;
   roomBtns.forEach(b =>
     b.classList.toggle("active", b.dataset.rooms === currentRoom));
+  updateMoreFiltersBadge();
   applyFilter();
 }
 
@@ -1102,8 +1241,11 @@ function renderDetail(r) {
        </div>`
     : `<div class="detail-price-row"><span>${E(fmtRub(base || program))}</span></div>`;
   const ppm = r["база_за_м²"] || (base && r["площадь_м²"] ? Math.round(base/r["площадь_м²"]) : null);
+  // metroTimeText сам подавит «0/null мин» — отдельная проверка не нужна,
+  // но строку «N мин пешком» здесь хотим длиннее, чем helper («N мин»).
+  const metroTime = metroTimeText(r);
   const metroLine = r["метро"]
-    ? `${E(r["метро"])}${r["мин_пешком"] != null ? " · " + Eraw(r["мин_пешком"]) + " мин пешком" : ""}`
+    ? `${E(r["метро"])}${metroTime ? " · " + Eraw(metroTime.replace(" мин", "")) + " мин пешком" : ""}`
     : "—";
   const settle = fmtSettle(r["заселение"]) || "—";
   const planUrl = safeUrl(r["планировка"]);
@@ -1457,7 +1599,46 @@ function filteredRows() {
   const flatPrice = (r) => r["цена_по_программе"] || r["базовая_цена"];
   if (priceMin != null) rows = rows.filter(r => flatPrice(r) != null && flatPrice(r) >= priceMin * 1e6);
   if (priceMax != null) rows = rows.filter(r => flatPrice(r) != null && flatPrice(r) <= priceMax * 1e6);
+  // ── Расширенный набор фильтров (panel «Все фильтры») ──────────
+  // До метро: 0/null обрабатываем как «нет данных»; range фильтрует только
+  // квартиры с известным временем — для тех у кого метро не найдено
+  // фильтр исключает. Это сознательно: пользователь, ищущий «до 10 мин»,
+  // не хочет видеть лоты с НЕИЗВЕСТНЫМ временем (они скорее всего далеко).
+  if (metroMin != null) rows = rows.filter(r => r["мин_пешком"] != null && r["мин_пешком"] > 0 && r["мин_пешком"] >= metroMin);
+  if (metroMax != null) rows = rows.filter(r => r["мин_пешком"] != null && r["мин_пешком"] > 0 && r["мин_пешком"] <= metroMax);
+  if (distMin != null) rows = rows.filter(r => r["км_от_центра"] != null && r["км_от_центра"] >= distMin);
+  if (distMax != null) rows = rows.filter(r => r["км_от_центра"] != null && r["км_от_центра"] <= distMax);
+  if (floorMin != null) rows = rows.filter(r => r["этаж"] != null && r["этаж"] >= floorMin);
+  if (floorMax != null) rows = rows.filter(r => r["этаж"] != null && r["этаж"] <= floorMax);
+  if (settleYearMax != null) {
+    rows = rows.filter(r => {
+      const y = settlementYear(r["заселение"]);
+      return y != null && y <= settleYearMax;
+    });
+  }
+  if (finishFilter !== "all") rows = rows.filter(r => r["отделка"] === finishFilter);
+  if (onlyFree) rows = rows.filter(r => r["статус"] === "free");
+  if (hasMetro) rows = rows.filter(r => !!r["метро"]);
   return rows;
+}
+
+// Счётчик активных «extra»-фильтров для бейджа на кнопке «Все фильтры».
+function updateMoreFiltersBadge() {
+  const badge = document.getElementById("moreFiltersCount");
+  if (!badge) return;
+  let n = 0;
+  if (metroMin != null) n++;
+  if (metroMax != null) n++;
+  if (distMin != null) n++;
+  if (distMax != null) n++;
+  if (floorMin != null) n++;
+  if (floorMax != null) n++;
+  if (settleYearMax != null) n++;
+  if (finishFilter !== "all") n++;
+  if (onlyFree) n++;
+  if (hasMetro) n++;
+  badge.textContent = n;
+  badge.classList.toggle("active", n > 0);
 }
 
 // Mobile-detection — гейт для тяжёлой работы: на desktop рендерить карточки
@@ -1499,8 +1680,9 @@ function renderCardList(rows) {
     const priceTxt = hasDisc
       ? `${(program/1e6).toFixed(2)} М ₽ <span class="struck">${(base/1e6).toFixed(2)} М</span>`
       : `${((base||program||0)/1e6).toFixed(2)} М ₽`;
+    const metroTimeStr = metroTimeText(r);  // "N мин" or ""
     const metro = r["метро"]
-      ? `${E(r["метро"])}${r["мин_пешком"] != null ? " · " + r["мин_пешком"] + " мин" : ""}`
+      ? `${E(r["метро"])}${metroTimeStr ? " · " + metroTimeStr : ""}`
       : "—";
     const settle = fmtSettle(r["заселение"]) || "—";
     const floor = r["этаж"] != null
@@ -1768,6 +1950,26 @@ async function load() {
   document.getElementById("priceMin").addEventListener("input", onPriceChange);
   document.getElementById("priceMax").addEventListener("input", onPriceChange);
 
+  // Helper: сбросить только extra-фильтры (используется и Reset-кнопкой,
+  // и кнопкой «Сбросить эти» внутри popover'а).
+  function resetExtraFilters() {
+    metroMin = metroMax = distMin = distMax = floorMin = floorMax = null;
+    settleYearMax = null;
+    finishFilter = "all";
+    onlyFree = false;
+    hasMetro = false;
+    for (const id of ["metroMin","metroMax","distMin","distMax",
+                       "floorMin","floorMax"]) {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    }
+    document.getElementById("settleYearMax").value = "";
+    document.getElementById("finishFilter").value = "all";
+    document.getElementById("onlyFree").checked = false;
+    document.getElementById("hasMetro").checked = false;
+    updateMoreFiltersBadge();
+  }
+
   // ✕ Сбросить — обнуляем все переменные, dropdown'ы и инпуты.
   // hideApart НЕ сбрасываем (это безопасный дефолт «без апартаментов»).
   document.getElementById("resetBtn").addEventListener("click", () => {
@@ -1781,6 +1983,7 @@ async function load() {
     document.getElementById("promoOnly").checked = false;
     document.querySelectorAll(".controls button[data-rooms]").forEach(b =>
       b.classList.toggle("active", b.dataset.rooms === "all"));
+    resetExtraFilters();
     applyFilter();
   });
 
@@ -1874,6 +2077,65 @@ async function load() {
     if (!colsPanel.contains(e.target) && e.target !== colsBtn) {
       colsPanel.classList.remove("open");
     }
+  });
+
+  // «Все фильтры» popover. Тот же паттерн что и colsPanel.
+  const moreBtn = document.getElementById("moreFiltersBtn");
+  const morePanel = document.getElementById("moreFiltersPanel");
+  moreBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    morePanel.classList.toggle("open");
+  });
+  document.addEventListener("click", (e) => {
+    // Если клик ВНУТРИ panel'а (например по input) — не закрываем.
+    // Если по самому btn — не дёргаем (его собственный handler сделает toggle).
+    if (!morePanel.contains(e.target) && e.target !== moreBtn
+        && !moreBtn.contains(e.target)) {
+      morePanel.classList.remove("open");
+    }
+  });
+
+  // Bindings для всех extra-полей с общим debounce.
+  const onExtraNumChange = debounce(() => {
+    const v = (id) => {
+      const el = document.getElementById(id);
+      return el && el.value.trim() !== "" ? Number(el.value) : null;
+    };
+    metroMin = v("metroMin");
+    metroMax = v("metroMax");
+    distMin = v("distMin");
+    distMax = v("distMax");
+    floorMin = v("floorMin");
+    floorMax = v("floorMax");
+    updateMoreFiltersBadge();
+    applyFilter();
+  });
+  for (const id of ["metroMin","metroMax","distMin","distMax","floorMin","floorMax"]) {
+    document.getElementById(id).addEventListener("input", onExtraNumChange);
+  }
+  document.getElementById("settleYearMax").addEventListener("change", (e) => {
+    settleYearMax = e.target.value === "" ? null : Number(e.target.value);
+    updateMoreFiltersBadge();
+    applyFilter();
+  });
+  document.getElementById("finishFilter").addEventListener("change", (e) => {
+    finishFilter = e.target.value || "all";
+    updateMoreFiltersBadge();
+    applyFilter();
+  });
+  document.getElementById("onlyFree").addEventListener("change", (e) => {
+    onlyFree = e.target.checked;
+    updateMoreFiltersBadge();
+    applyFilter();
+  });
+  document.getElementById("hasMetro").addEventListener("change", (e) => {
+    hasMetro = e.target.checked;
+    updateMoreFiltersBadge();
+    applyFilter();
+  });
+  document.getElementById("moreFiltersReset").addEventListener("click", () => {
+    resetExtraFilters();
+    applyFilter();
   });
 
   const last = rows[0]?.["дата_среза"] || "—";
