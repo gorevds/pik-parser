@@ -290,7 +290,10 @@ def safe_next_url(url: str | None, allowed_host: str) -> str | None:
         parsed = urlparse(url)
     except (ValueError, AttributeError):
         return None
-    host = parsed.hostname or ""
+    # Trailing dot — валидная FQDN-форма (a101.ru. == a101.ru). Снимаем
+    # перед сравнением, иначе любой бэк, отдающий `next: 'https://a101.ru./?p=2'`
+    # уронит сканер в пол-обхода.
+    host = (parsed.hostname or "").rstrip(".")
     if not (host == allowed_host or host.endswith("." + allowed_host)):
         return None
     if parsed.scheme not in ("http", "https"):

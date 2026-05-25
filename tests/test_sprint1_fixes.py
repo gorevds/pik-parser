@@ -43,6 +43,17 @@ def test_safe_next_url_subdomain_match():
             == "https://api.granelle.ru/api/flats/?page=2")
 
 
+def test_safe_next_url_strips_trailing_dot_in_fqdn():
+    """`a101.ru.` — валидная FQDN-форма, эквивалентна `a101.ru`."""
+    got = safe_next_url("https://a101.ru./api/flats/?page=2", "a101.ru")
+    assert got == "https://a101.ru./api/flats/?page=2"
+
+
+def test_safe_next_url_userinfo_injection_blocked():
+    """https://a101.ru@evil.com/x должен распарситься в host=evil.com."""
+    assert safe_next_url("https://a101.ru@evil.com/x", "a101.ru") is None
+
+
 # ============================================================== S1.10 rate ====
 
 

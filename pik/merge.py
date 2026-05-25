@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -16,6 +17,9 @@ from .store import (
     _FLAT_COLS, _FLAT_DEFAULTS, _SNAP_COLS, _SNAP_DEFAULTS,
     _FLATS_INSERT, _SNAP_INSERT, apply_schema,
 )
+
+
+_MSK = timezone(timedelta(hours=3))
 
 
 log = logging.getLogger("pik.merge")
@@ -52,36 +56,36 @@ def merge_databases(
         conn.execute("ATTACH DATABASE ? AS src", (str(src),))
         try:
             # 1. Blocks — без них квартиры осиротеют (build_rows/today_all
-            #    отнесли бы их к 'ПИК' через COALESCE). Сначала перенос blocks.
+            #    отнесли бы их к 'ПИК' через COALESCE). Сначала перенос blocks
+            #    одной транзакцией: либо вся группа блоков из этого источника
+            #    приземлилась, либо ничего (откатываемся). upsert_block_meta(
+            #    commit=False) разрешает батчинг.
             blocks_cols_src = _src_table_cols(conn, "blocks")
             n_blocks = 0
             if blocks_cols_src:
-                # Берём только колонки, реально присутствующие у источника.
-                # Недостающие meta-колонки пройдут как NULL в meta-dict, и
-                # upsert_block_meta их через COALESCE НЕ перетрёт у уже
-                # существующего блока в main — поведение корректное.
                 meta_in_src = [c for c in _BLOCK_META_COLS if c in blocks_cols_src]
                 dev_col = "developer" if "developer" in blocks_cols_src else "'ПИК' AS developer"
                 cols = ["id", "name", dev_col, "slug"] + meta_in_src
                 cur = conn.cursor()
                 cur.execute(f"SELECT {', '.join(cols)} FROM src.blocks")
                 rows = cur.fetchall()
-                # ts источника не сохраняем — у нас есть updated_at от текущей
-                # сессии, и upsert_block_meta его поставит свежим. Это корректно:
-                # сам факт «увидели в backfill сегодня» — это и есть событие.
-                from datetime import datetime, timezone, timedelta
-                msk = timezone(timedelta(hours=3))
-                merge_ts = datetime.now(msk).isoformat(timespec="seconds")
+                merge_ts = datetime.now(_MSK).isoformat(timespec="seconds")
                 col_names = ["id", "name", "developer", "slug"] + meta_in_src
-                for r in rows:
-                    rec = dict(zip(col_names, r))
-                    meta = {c: rec.get(c) for c in meta_in_src}
-                    upsert_block_meta(
-                        conn, block_id=rec["id"], name=rec["name"],
-                        slug=rec.get("slug"), meta=meta,
-                        developer=rec.get("developer") or "ПИК",
-                        scan_ts=merge_ts,
-                    )
+                cur.execute("BEGIN")
+                try:
+                    for r in rows:
+                        rec = dict(zip(col_names, r))
+                        meta = {c: rec.get(c) for c in meta_in_src}
+                        upsert_block_meta(
+                            conn, block_id=rec["id"], name=rec["name"],
+                            slug=rec.get("slug"), meta=meta,
+                            developer=rec.get("developer") or "ПИК",
+                            scan_ts=merge_ts, commit=False,
+                        )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
                 n_blocks = len(rows)
 
             cur = conn.cursor()

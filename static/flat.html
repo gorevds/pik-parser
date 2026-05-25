@@ -229,6 +229,8 @@ function fillMeta(f) {
   const meta = document.getElementById("meta");
   // floors_max — этажность всего корпуса; в API не у всех есть, тогда «—»
   const floorOf = f.floors_max ?? "—";
+  // Эскейпим один раз — здесь, при сборке значения. Внешний esc(v) в .map
+  // ниже убран: иначе двойное кодирование («&» → «&amp;» → «&amp;amp;»).
   const kitchenSuffix = f.area_kitchen
     ? ` (кухня ${esc(f.area_kitchen)}, жилая ${esc(f.area_living ?? "—")})`
     : "";
@@ -236,18 +238,19 @@ function fillMeta(f) {
     // Раньше «Комплекс» и «Корпус» оба заполнялись одним bulk_name (например,
     // «Корпус 8») — в результате обе строки показывали одно и то же. Сейчас
     // bulk_name явно про корпус; комплекс убираем (это и так в заголовке).
-    ["Корпус", f.bulk_name || "—"],
-    ["Секция", f.section_no ?? "—"],
+    ["Корпус", esc(f.bulk_name || "—")],
+    ["Секция", esc(f.section_no ?? "—")],
     // Раньше было `f.rooms_fact ? "?" : "?"` — вырожденный тернарник, всегда
     // выдавал «?». Сейчас «этаж из этажность» через реальный floors_max.
-    ["Этаж", `${f.floor ?? "—"} из ${floorOf}`],
+    ["Этаж", `${esc(f.floor ?? "—")} из ${esc(floorOf)}`],
     ["Площадь", `${esc(f.area ?? "—")} м²${kitchenSuffix}`],
-    ["Заселение", (f.settlement_date || "—").slice(0, 10)],
-    ["Артикул", f.name || "—"],
-    ["Первый срез", f.first_seen || "—"],
+    ["Заселение", esc((f.settlement_date || "—").slice(0, 10))],
+    ["Артикул", esc(f.name || "—")],
+    ["Первый срез", esc(f.first_seen || "—")],
   ];
   meta.innerHTML = rows
-    .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`)
+    // k — литералы (Корпус/Секция/…); v уже эскейплено выше — НЕ дублируем.
+    .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`)
     .join("");
 }
 

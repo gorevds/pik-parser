@@ -11,6 +11,16 @@ REPO_DIR="${REPO_DIR:-$PWD}"
 APP_DIR="/opt/pik"
 SVC_USER="pik"
 
+# OnSuccess=/OnFailure= в pik-scan.service требуют systemd >= 249
+# (Ubuntu 22.04 LTS / Debian 12 / RHEL 9). На более старых системах
+# чейн pik-scan-dev молча не сработает (никакой ошибки в daemon-reload).
+# Прерываемся ДО изменений: лучше явный fail, чем тихая регрессия.
+SYSTEMD_VER=$(systemctl --version | awk 'NR==1{print $2}')
+if [ "${SYSTEMD_VER:-0}" -lt 249 ]; then
+  echo "ERROR: systemd $SYSTEMD_VER < 249 — нужен Ubuntu 22.04+/Debian 12+ для OnSuccess= в pik-scan.service" >&2
+  exit 1
+fi
+
 # 1. Системный пользователь
 id -u "$SVC_USER" &>/dev/null || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$SVC_USER"
 
@@ -46,10 +56,14 @@ if systemctl is-enabled --quiet pik-scan-dev.timer 2>/dev/null; then
   echo ">>> pik-scan-dev.timer отключён (теперь чейнится из pik-scan.service)"
 fi
 
-# 5. Первый прогон сканов (обновляет схему + наполняет БД)
+# 5. Первый прогон сканов (обновляет схему + наполняет БД).
+# pik-scan-dev стартует автоматически через OnSuccess/OnFailure из
+# pik-scan.service — повторно запускать его руками не нужно (это удваивало
+# квоту обращений к API внешних застройщиков на каждом install).
 systemctl start pik-scan.service
 journalctl -u pik-scan.service --no-pager | tail -20
-systemctl start pik-scan-dev.service
+# Wait for OnSuccess chain
+sleep 2
 journalctl -u pik-scan-dev.service --no-pager | tail -20
 
 # Перезапуск Datasette после изменения схемы (он держит соединение с pik.db)
