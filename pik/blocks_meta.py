@@ -20,9 +20,18 @@ def upsert_block_meta(
 ) -> None:
     """Upsert одной записи blocks с полной мета-информацией.
 
+    Для каждого meta-поля используем COALESCE(excluded, blocks): если источник
+    в текущем скане НЕ отдал поле (частичный фетч, /api/projects/ упал, …),
+    мы НЕ затираем уже накопленные metro/coords/address значением NULL.
+    Источники по контракту перезаписывают только то, что реально достали.
+    `developer`/`name`/`slug` всегда известны на момент upsert — затираем
+    обычным excluded.X (slug всё равно через COALESCE, был исторически).
+
     `developer` по умолчанию 'ПИК' — обратная совместимость с PIK-сканером.
     """
-    set_clause = ", ".join(f"{c}=excluded.{c}" for c in _BLOCK_META_COLS)
+    set_clause = ", ".join(
+        f"{c}=COALESCE(excluded.{c}, blocks.{c})" for c in _BLOCK_META_COLS
+    )
     cols = ("id", "name", "developer", "slug", "updated_at") + _BLOCK_META_COLS
     placeholders = ", ".join("?" for _ in cols)
     values = [block_id, name, developer, slug, scan_ts] + [

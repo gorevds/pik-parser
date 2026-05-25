@@ -183,13 +183,20 @@ def _collect_region(session: requests.Session, region: str, city_code: str) -> C
             # цены бесполезен для аналитики, пропускаем. Также проверяем id.
             if not nf.native_id or not nf.native_block_id or not nf.price:
                 continue
-            # Префиксим slug регионом — уникально в кросс-региональной БД
-            pref_slug = f"{region}:{nf.native_block_id}"
-            blocks.setdefault(pref_slug,
-                              fl.get("complex_name") or pref_slug)
-            # Подменяем native_block_id на префиксированный
+            # Префиксим И slug блока, И flat_id регионом. Иначе при пересечении
+            # числовых пространств id (Москва flat_id=100 и Тюмень flat_id=100)
+            # to_global_id даёт одинаковый namespaced_id — вторая квартира
+            # затирает первую как dup в build_rows. Префикс гарантирует, что
+            # stable_int_id хеширует "moskva:100" и "tyumen:100" в разные числа.
+            pref_block = f"{region}:{nf.native_block_id}"
+            pref_flat = f"{region}:{nf.native_id}"
+            blocks.setdefault(pref_block,
+                              fl.get("complex_name") or pref_block)
+            # Подменяем оба native id на префиксированные
             norm_flats.append(NormFlat(
-                **{**nf.__dict__, "native_block_id": pref_slug}
+                **{**nf.__dict__,
+                   "native_id": pref_flat,
+                   "native_block_id": pref_block}
             ))
         if len(items) < _PAGE_LIMIT:
             break
@@ -199,12 +206,12 @@ def _collect_region(session: requests.Session, region: str, city_code: str) -> C
 
     proj_meta = _fetch_projects(session, region)
     norm_blocks = []
-    for pref_slug, name in blocks.items():
-        complex_id = pref_slug.split(":", 1)[1]
+    for pref_block, name in blocks.items():
+        complex_id = pref_block.split(":", 1)[1]
         meta = dict(proj_meta.get(complex_id, {}))
         meta["city"] = city_code  # принудительно: поддомен знает city
-        norm_blocks.append(NormBlock(native_id=pref_slug, name=name,
-                                     slug=pref_slug, meta=meta))
+        norm_blocks.append(NormBlock(native_id=pref_block, name=name,
+                                     slug=pref_block, meta=meta))
     log.info("Брусника [%s]: %d ЖК, %d квартир", region, len(norm_blocks), len(norm_flats))
     return CollectResult(blocks=norm_blocks, flats=norm_flats)
 

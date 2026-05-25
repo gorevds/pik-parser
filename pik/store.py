@@ -162,9 +162,14 @@ def _assign_nearest_metro(conn: sqlite3.Connection) -> None:
             continue
         updates.append((nearest[0], nearest[1], nearest[2], time_est, oid))
     if updates:
+        # `AND metro_name IS NULL` — защита от гонки: между нашим SELECT
+        # orphans и этим UPDATE мог отработать blocks_meta.upsert_block_meta
+        # параллельного скана и положить metro_name от настоящего API.
+        # Перетирать его нашей эвристикой «соседний ЖК» нельзя.
         conn.executemany(
             "UPDATE blocks SET metro_name=?, metro_line_name=?, "
-            "metro_line_type=?, metro_time_foot=? WHERE id=?",
+            "metro_line_type=?, metro_time_foot=? "
+            "WHERE id=? AND metro_name IS NULL",
             updates,
         )
 
@@ -223,9 +228,13 @@ _SNAP_INSERT = _insert_sql(
 
 
 # Колонки flats/snapshots, добавленные миграциями — у внешних вызывающих
-# (старые скан-модули или тесты) их в dict может не быть. Дополняем дефолтом
-# чтобы named-параметры sqlite3 не падали с ProgrammingError.
+# (старые скан-модули, merge с легаси-БД, тесты) их в dict может не быть.
+# Дополняем дефолтом чтобы named-параметры sqlite3 не падали с ProgrammingError
+# или NOT NULL IntegrityError.
 _FLAT_DEFAULTS = {"is_apartment": 0}
+# snapshots.has_promo: NOT NULL DEFAULT 0 в миграции. Если row пришёл
+# из БД, где колонка ещё не существовала, явный 0 защищает от Integrity.
+_SNAP_DEFAULTS = {"has_promo": 0}
 
 
 def upsert(
@@ -234,14 +243,21 @@ def upsert(
     flats: Iterable[dict],
     snapshots: Iterable[dict],
 ) -> None:
+    # Материализуем сразу: API типизирует параметры как Iterable, но раньше
+    # код «потреблял» flats дважды — сначала проходом для setdefault, потом
+    # в executemany. Если вызывающий передал генератор, второй проход видел
+    # пустую последовательность и квартиры тихо пропадали. Сейчас контракт
+    # явно требует list — но удержим устойчивость.
+    flat_rows = list(flats)
+    snap_rows = list(snapshots)
+    for row in flat_rows:
+        for k, v in _FLAT_DEFAULTS.items():
+            row.setdefault(k, v)
     cur = conn.cursor()
     cur.execute("BEGIN")
     try:
-        for row in flats:
-            for k, v in _FLAT_DEFAULTS.items():
-                row.setdefault(k, v)
-        cur.executemany(_FLATS_INSERT, list(flats))
-        cur.executemany(_SNAP_INSERT, list(snapshots))
+        cur.executemany(_FLATS_INSERT, flat_rows)
+        cur.executemany(_SNAP_INSERT, snap_rows)
         conn.commit()
     except Exception:
         conn.rollback()
