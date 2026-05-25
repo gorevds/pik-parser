@@ -201,7 +201,10 @@ WITH block_latest AS (
 )
 SELECT
     f.id                      AS id,
-    COALESCE(b.developer, 'ПИК') AS застройщик,
+    -- b.developer NOT NULL DEFAULT 'ПИК' в схеме; миграция _migrate_blocks
+    -- бэкфилит существующие строки. COALESCE убран после R4 — иначе любая
+    -- забытая запись блока тихо клеилась бы к ПИК.
+    b.developer               AS застройщик,
     COALESCE(b.name, 'block ' || f.block_id) AS жк,
     COALESCE(b.city, 'msk')   AS город,
     b.metro_name              AS метро,

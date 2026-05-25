@@ -13,8 +13,8 @@ _BLOCK_META_COLS = (
 
 def upsert_block_meta(
     conn: sqlite3.Connection, *,
-    block_id: int, name: str, slug: str | None, meta: dict, scan_ts: str,
-    developer: str = "ПИК",
+    block_id: int, name: str, developer: str,
+    slug: str | None, meta: dict, scan_ts: str,
     commit: bool = True,
 ) -> None:
     """Upsert одной записи blocks с полной мета-информацией.
@@ -29,9 +29,11 @@ def upsert_block_meta(
     блок снесён), нужно отдельный DELETE/UPDATE. Сейчас ни один из 10
     источников такого сценария не порождает.
 
-    `developer`/`name`/`slug` всегда известны на момент upsert — затираем
-    обычным excluded.X (slug всё равно через COALESCE, был исторически).
-    `developer` по умолчанию 'ПИК' — обратная совместимость с PIK-сканером.
+    `developer` — ОБЯЗАТЕЛЕН с R4 рефактора (2026-05-25). Дефолт 'ПИК' был
+    тех-долгом, скрывавшим опечатки в новых источниках (квартиры тихо
+    приписывались к ПИК и сбивали аналитику по застройщикам). Теперь все
+    callers передают явно — опечатка ловится при typecheck/импорте, не в
+    проде.
 
     `commit=False` позволяет вызывающему батчить N upsert'ов в одну транзакцию
     (merge.py, будущий рефактор scan_dev). Снижает writer contention в WAL

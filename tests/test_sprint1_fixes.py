@@ -98,14 +98,14 @@ def test_upsert_block_meta_coalesce_preserves_existing_on_partial_meta():
     c = _schema()
     # Первый скан: всё есть
     upsert_block_meta(
-        c, block_id=999, name="ЖК Тест", slug="test",
+        c, block_id=999, name="ЖК Тест", developer="ПИК", slug="test",
         scan_ts="2026-05-24T06:00",
         meta={"metro_name": "Молодёжная", "metro_time_foot": 7,
               "latitude": 55.7, "longitude": 37.4, "city": "msk"},
     )
     # Второй скан: meta partial (источник /api/projects/ упал, metro нет)
     upsert_block_meta(
-        c, block_id=999, name="ЖК Тест", slug="test",
+        c, block_id=999, name="ЖК Тест", developer="ПИК", slug="test",
         scan_ts="2026-05-25T06:00",
         meta={"city": "msk"},  # только city, metro/coords отсутствуют
     )
@@ -123,9 +123,9 @@ def test_upsert_block_meta_coalesce_preserves_existing_on_partial_meta():
 def test_upsert_block_meta_overwrites_when_new_value_present():
     """А вот ЕСЛИ в новой meta поле есть и непустое — затираем нормально."""
     c = _schema()
-    upsert_block_meta(c, block_id=999, name="X", slug="x",
+    upsert_block_meta(c, block_id=999, name="X", developer="ПИК", slug="x",
                       scan_ts="t1", meta={"metro_name": "Старая"})
-    upsert_block_meta(c, block_id=999, name="X", slug="x",
+    upsert_block_meta(c, block_id=999, name="X", developer="ПИК", slug="x",
                       scan_ts="t2", meta={"metro_name": "Новая"})
     assert c.execute("SELECT metro_name FROM blocks WHERE id=999").fetchone()[0] == "Новая"
 
@@ -137,12 +137,12 @@ def test_assign_nearest_metro_does_not_overwrite_existing_value():
     """Если у блока УЖЕ есть metro_name, эвристика не должна его перетирать."""
     c = _schema()
     # Donor: блок с настоящим metro
-    upsert_block_meta(c, block_id=1, name="Donor", slug="d", scan_ts="t",
+    upsert_block_meta(c, block_id=1, name="Donor", developer="ПИК", slug="d", scan_ts="t",
                       meta={"metro_name": "Лубянка", "metro_time_foot": 3,
                             "latitude": 55.760, "longitude": 37.629})
     # Recipient: тоже с metro, но другим — нашим nearest-эвристикой мы НЕ
     # должны его перезаписать на «Лубянка».
-    upsert_block_meta(c, block_id=2, name="Recipient", slug="r", scan_ts="t",
+    upsert_block_meta(c, block_id=2, name="Recipient", developer="ПИК", slug="r", scan_ts="t",
                       meta={"metro_name": "Театральная", "metro_time_foot": 5,
                             "latitude": 55.760, "longitude": 37.624})
     _assign_nearest_metro(c)
@@ -153,10 +153,10 @@ def test_assign_nearest_metro_does_not_overwrite_existing_value():
 def test_assign_nearest_metro_fills_null_from_neighbor():
     """А ЕСЛИ metro_name действительно NULL — заполняем от ближайшего."""
     c = _schema()
-    upsert_block_meta(c, block_id=1, name="Donor", slug="d", scan_ts="t",
+    upsert_block_meta(c, block_id=1, name="Donor", developer="ПИК", slug="d", scan_ts="t",
                       meta={"metro_name": "Лубянка", "metro_time_foot": 3,
                             "latitude": 55.760, "longitude": 37.629})
-    upsert_block_meta(c, block_id=2, name="Orphan", slug="o", scan_ts="t",
+    upsert_block_meta(c, block_id=2, name="Orphan", developer="ПИК", slug="o", scan_ts="t",
                       meta={"latitude": 55.760, "longitude": 37.629})
     _assign_nearest_metro(c)
     metro = c.execute("SELECT metro_name FROM blocks WHERE id=2").fetchone()[0]

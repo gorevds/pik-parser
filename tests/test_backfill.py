@@ -21,11 +21,11 @@ def test_blocks_with_slug_filters_null_and_blank(tmp_path):
     db = tmp_path / "pik.db"
     conn = sqlite3.connect(db)
     apply_schema(conn)
-    upsert_block_meta(conn, block_id=1, name="A", slug="narvin", meta={}, scan_ts="t")
-    upsert_block_meta(conn, block_id=2, name="B", slug=None, meta={}, scan_ts="t")
-    upsert_block_meta(conn, block_id=3, name="C", slug="  ", meta={}, scan_ts="t")
+    upsert_block_meta(conn, block_id=1, name="A", developer="ПИК", slug="narvin", meta={}, scan_ts="t")
+    upsert_block_meta(conn, block_id=2, name="B", developer="ПИК", slug=None, meta={}, scan_ts="t")
+    upsert_block_meta(conn, block_id=3, name="C", developer="ПИК", slug="  ", meta={}, scan_ts="t")
     upsert_block_meta(
-        conn, block_id=4, name="D", slug="kazan/siberovo", meta={}, scan_ts="t"
+        conn, block_id=4, name="D", developer="ПИК", slug="kazan/siberovo", meta={}, scan_ts="t"
     )
     conn.close()
     assert _blocks_with_slug(db) == [(1, "narvin"), (4, "kazan/siberovo")]
