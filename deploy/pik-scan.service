@@ -20,10 +20,13 @@ ExecStart=/opt/pik/venv/bin/python -m bin.scan_dev --db /opt/pik/data/pik.db --a
 StandardOutput=journal
 StandardError=journal
 
-# Resource limits. Scan держит до 100МБ под буферы парсинга (68 ЖК
-# параллельно), 512МБ — комфортный запас x5. CPUQuota 400% = до 4-х
-# воркеров на полной отдаче (ThreadPoolExecutor max_workers=6).
-MemoryMax=512M
+# Resource limits. После R5 рефактора (2026-05-25) один pik-scan ведёт
+# все 10 застройщиков параллельно (включая PIK с inner ThreadPool). Пик
+# памяти подскочил с ~125МБ (только non-PIK) до ~600МБ (PIK API возвращает
+# 10k+ JSON-items, x6 параллельных PIK-workers держат buffers). 1024МБ —
+# x1.6 от наблюдаемого пика. Сервер имеет ~16GB; ни один сосед на VM не
+# затронут даже при полной утилизации этого лимита.
+MemoryMax=1024M
 CPUQuota=400%
 PrivateTmp=yes
 ProtectSystem=strict
