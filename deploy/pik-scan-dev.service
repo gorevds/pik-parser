@@ -16,3 +16,16 @@ Environment=TZ=Europe/Moscow
 ExecStart=/opt/pik/venv/bin/python -m bin.scan_dev --db /opt/pik/data/pik.db --all
 StandardOutput=journal
 StandardError=journal
+
+# Тот же sandbox-набор, что у pik-scan. Брусника тянет 11 регионов, MR
+# Group + Level медленные — даём 30 мин TimeoutStartSec.
+MemoryMax=512M
+CPUQuota=400%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+NoNewPrivileges=yes
+ReadWritePaths=/opt/pik/data
+TimeoutStartSec=1800

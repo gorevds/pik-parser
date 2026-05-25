@@ -31,5 +31,24 @@ ExecStart=/opt/pik/venv/bin/datasette serve /opt/pik/data/pik.db \
 Restart=on-failure
 RestartSec=5
 
+# Resource limits + sandboxing — Datasette не должен утащить весь хост,
+# если кто-то найдёт способ заставить его сожрать память запросом
+# (default_allow_sql=off уже отрезает основной вектор, но defence in depth).
+# Memory предел 256МБ: prod peak observed 35МБ, x7 headroom покрывает
+# любой mmap-всплеск; больше — это всё равно бага и Restart=on-failure
+# успеет.
+MemoryMax=256M
+CPUQuota=150%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+NoNewPrivileges=yes
+ReadOnlyPaths=/opt/pik
+ReadWritePaths=/opt/pik/data
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
 [Install]
 WantedBy=multi-user.target

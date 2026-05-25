@@ -12,3 +12,14 @@ Environment=TZ=Europe/Moscow
 ExecStart=/bin/bash /opt/pik/deploy/backup.sh
 StandardOutput=journal
 StandardError=journal
+
+# Бэкап в реальности использует ~50МБ (sqlite3 .backup + gzip pipe);
+# 128МБ с запасом. 10 минут — хватает на 40МБ БД с gzip -6.
+MemoryMax=128M
+CPUQuota=200%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ReadWritePaths=/opt/pik/data
+TimeoutStartSec=600

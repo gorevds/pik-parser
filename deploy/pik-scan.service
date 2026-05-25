@@ -18,3 +18,19 @@ Environment=TZ=Europe/Moscow
 ExecStart=/opt/pik/venv/bin/python -m bin.scan --db /opt/pik/data/pik.db --all-blocks
 StandardOutput=journal
 StandardError=journal
+
+# Resource limits. Scan держит до 100МБ под буферы парсинга (68 ЖК
+# параллельно), 512МБ — комфортный запас x5. CPUQuota 400% = до 4-х
+# воркеров на полной отдаче (ThreadPoolExecutor max_workers=6).
+MemoryMax=512M
+CPUQuota=400%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+NoNewPrivileges=yes
+ReadWritePaths=/opt/pik/data
+TimeoutStartSec=1800
+# 30мин cap: при здоровых API скан занимает 2-5мин; жёсткая стенка на
+# случай зависшего HTTP-соединения, которое requests-timeout не поймал.
