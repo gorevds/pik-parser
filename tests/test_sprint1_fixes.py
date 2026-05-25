@@ -17,7 +17,6 @@ from pik.sources.base import safe_next_url
 from pik.sources.brusnika import _to_norm as _brusnika_to_norm
 from pik.store import _assign_nearest_metro, apply_schema, upsert
 
-
 # ============================================================== S1.6 SSRF =====
 
 

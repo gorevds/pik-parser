@@ -15,17 +15,16 @@ import logging
 import sqlite3
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
 
 from pik.blocks_meta import upsert_block_meta
 from pik.developers import DEVELOPERS
 from pik.sources import a101, absolut, brusnika, donstroy, fsk, granel, ingrad, level, mrgroup
 from pik.sources.base import CollectResult, SourceError, build_rows
-from pik.store import apply_schema, upsert
-
+from pik.store import apply_schema, record_scan_run, refresh_materialized, upsert
 
 MSK = timezone(timedelta(hours=3))
 
@@ -70,31 +69,58 @@ def run_developer(
     """Обойти одного застройщика и записать результат. → (n_blocks, n_flats).
 
     Схема должна быть уже применена (_ensure_schema). Соединение своё —
-    функция безопасна для запуска в отдельном потоке.
+    функция безопасна для запуска в отдельном потоке. Завершение пишет
+    запись в scan_runs независимо от исхода (success/exception).
     """
     log = logging.getLogger("pik.scan_dev")
-    result = SOURCES[developer]()
-    block_payloads, flat_rows, snap_rows = build_rows(
-        developer, result, scan_date=scan_date, scan_ts=scan_ts
-    )
-
-    conn = sqlite3.connect(db_path)
+    started = time.monotonic()
+    err_msg = None
+    n_blocks = n_flats = 0
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout=30000")
-        for bp in block_payloads:
-            upsert_block_meta(
-                conn, block_id=bp["block_id"], name=bp["name"],
-                slug=bp["slug"], meta=bp["meta"], developer=bp["developer"],
-                scan_ts=scan_ts,
-            )
-        upsert(conn, flats=flat_rows, snapshots=snap_rows)
+        result = SOURCES[developer]()
+        block_payloads, flat_rows, snap_rows = build_rows(
+            developer, result, scan_date=scan_date, scan_ts=scan_ts
+        )
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA busy_timeout=30000")
+            for bp in block_payloads:
+                upsert_block_meta(
+                    conn, block_id=bp["block_id"], name=bp["name"],
+                    slug=bp["slug"], meta=bp["meta"], developer=bp["developer"],
+                    scan_ts=scan_ts,
+                )
+            upsert(conn, flats=flat_rows, snapshots=snap_rows)
+        finally:
+            conn.close()
+        n_blocks, n_flats = len(block_payloads), len(flat_rows)
+        log.info("%s: записано %d ЖК, %d квартир", developer, n_blocks, n_flats)
+    except Exception as exc:
+        # СОХРАНИМ запись scan_runs со статусом error, дальше пробросим.
+        # На уровне run_sweep исключение уже логируется и считается в failed,
+        # но без scan_runs мы не могли бы потом ответить «какой именно
+        # застройщик умер и когда» из БД (без journalctl).
+        err_msg = f"{type(exc).__name__}: {exc}"[:500]
+        raise
     finally:
-        conn.close()
-
-    log.info("%s: записано %d ЖК, %d квартир", developer, len(block_payloads),
-             len(flat_rows))
-    return len(block_payloads), len(flat_rows)
+        duration = round(time.monotonic() - started, 1)
+        # Отдельное соединение для лога — main connection может быть в bad state
+        # (поэтому-то мы и логируем тут, в finally).
+        try:
+            log_conn = sqlite3.connect(db_path)
+            log_conn.execute("PRAGMA busy_timeout=30000")
+            record_scan_run(
+                log_conn, developer=developer,
+                scan_date=scan_date, scan_ts=scan_ts,
+                n_blocks=n_blocks, n_flats=n_flats, duration_s=duration,
+                status=("ok" if err_msg is None else "error"),
+                error_msg=err_msg,
+            )
+            log_conn.close()
+        except Exception:
+            log.exception("%s: не удалось записать scan_runs", developer)
+    return n_blocks, n_flats
 
 
 def run_sweep(
@@ -124,6 +150,18 @@ def run_sweep(
             except Exception:
                 log.exception("%s: непредвиденный сбой", dev)
                 failed += 1
+
+    # Материализуем view'и сразу после параллельных upsert'ов — теперь, когда
+    # все 9 застройщиков отписались, можно построить today_all одним проходом.
+    # scan_dev стартует ИЗ pik-scan.service через OnSuccess, т.е. этот refresh
+    # — последний шаг ночного цикла. До 2026-05-25 эти view'и считались на
+    # каждый GET от Datasette и грузили БД на 3-5с/запрос.
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA busy_timeout=30000")
+        refresh_materialized(conn)
+    finally:
+        conn.close()
 
     elapsed = time.monotonic() - started
     log.info("обход завершён: %d застройщик(ов), %d воркер(ов), %d сбой(ев), "

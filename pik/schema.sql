@@ -99,92 +99,28 @@ CREATE TABLE IF NOT EXISTS history_aggregated (
 
 CREATE INDEX IF NOT EXISTS idx_hist_block_date ON history_aggregated(block_id, date);
 
--- Свежий срез: ВСЕ квартиры со всеми ценами (база + с программой) по всем ЖК.
--- Для каждого ЖК берётся ЕГО последний скан (а не глобальный максимум по всей
--- таблице) — иначе ЖК, отсканированный раньше других, целиком исчезает из
--- витрины. Колонка `жк` = название проекта из блока (если зарегистрирован).
-DROP VIEW IF EXISTS today_all;
-CREATE VIEW today_all AS
-WITH block_latest AS (
-    SELECT f.block_id AS block_id, MAX(s.scan_date) AS scan_date
-    FROM snapshots s
-    JOIN flats f ON f.id = s.flat_id
-    GROUP BY f.block_id
-)
-SELECT
-    f.id                      AS id,
-    COALESCE(b.developer, 'ПИК') AS застройщик,
-    COALESCE(b.name, 'block ' || f.block_id) AS жк,
-    -- город — из b.city (заполняется при сканировании из адреса; см.
-    -- pik.geo.city_from_address). Для строк до миграции, где city не
-    -- проставлен, считаем 'msk' (так было до мульти-города).
-    COALESCE(b.city, 'msk')   AS город,
-    b.metro_name              AS метро,
-    CASE b.metro_line_type
-        WHEN 1 THEN 'M'
-        WHEN 2 THEN 'МЦК'
-        WHEN 3 THEN 'МЦД'
-        WHEN 4 THEN 'электр.'
-        ELSE NULL
-    END                       AS тип_транспорта,
-    b.metro_time_foot         AS "мин_пешком",
-    b.metro_line_name         AS линия,
-    b.distance_km             AS "км_от_центра",
-    CASE f.rooms
-        WHEN 'studio' THEN 'студия'
-        WHEN '-1'     THEN 'студия'
-        ELSE f.rooms || 'к'
-    END                       AS комнат,
-    f.is_apartment            AS апартаменты,
-    f.bulk_name               AS корпус,
-    f.section_no              AS секция,
-    f.floor                   AS этаж,
-    f.area                    AS "площадь_м²",
-    -- база = old_price если есть скидка, иначе текущая. У не-PIK с
-    -- discount (FSK/MR Group) raw price = ТЕКУЩАЯ, и без COALESCE «база» и
-    -- «с программой» показывали одно и то же — баг был визуально заметен.
-    COALESCE(s.old_price, s.price) AS базовая_цена,
-    s.promo_price             AS "цена_по_программе",
-    s.base_meter_price        AS "база_за_м²",
-    s.meter_price             AS "по_программе_за_м²",
-    s.has_promo               AS "промо",
-    s.discount_pct            AS "скидка_%",
-    s.mortgage_best_name      AS программа,
-    s.status                  AS статус,
-    s.finish                  AS отделка,
-    f.settlement_date         AS заселение,
-    b.floors_max              AS "этажей_всего",
-    b.address                 AS адрес,
-    f.name                    AS артикул,
-    f.url                     AS ссылка,
-    f.plan_url                AS планировка,
-    s.scan_date               AS дата_среза,
-    f.block_id                AS block_id
-FROM flats f
-JOIN snapshots s ON s.flat_id = f.id
-JOIN block_latest bl ON bl.block_id = f.block_id AND bl.scan_date = s.scan_date
-LEFT JOIN blocks b ON b.id = f.block_id;
+-- Operational telemetry: одна строка на (scan_date, developer). Лог
+-- завершения скана: сколько ЖК/квартир записано, сколько секунд заняло,
+-- статус (ok|error|partial) и текст ошибки если упало.
+-- Прежнее status quo: разбираться приходилось по journalctl на сервере;
+-- этот реестр позволяет лэндингу/Datasette показать "последний скан был N
+-- часов назад" и алерту видеть stale-data за минуты, а не за день.
+CREATE TABLE IF NOT EXISTS scan_runs (
+    scan_date  TEXT NOT NULL,         -- yyyy-mm-dd МСК (та же, что у snapshots)
+    scan_ts    TEXT NOT NULL,         -- ISO8601 МСК — момент завершения
+    developer  TEXT NOT NULL,         -- 'ПИК' | 'А101' | … | '_all_' для bin/scan
+    n_blocks   INTEGER NOT NULL DEFAULT 0,
+    n_flats    INTEGER NOT NULL DEFAULT 0,
+    duration_s REAL,
+    status     TEXT NOT NULL,         -- 'ok' | 'error' | 'partial'
+    error_msg  TEXT,
+    PRIMARY KEY (scan_date, developer)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_ts ON scan_runs(scan_ts);
 
--- Обратная совместимость: тот же набор колонок, но только 1-к
-DROP VIEW IF EXISTS today_one_room;
-CREATE VIEW today_one_room AS
-SELECT * FROM today_all WHERE комнат = '1к';
-
--- Для лэндинга: компактная история цены за 30 дней на каждую квартиру —
--- одна строка на квартиру с массивом цен ASC по дате (sparkline в ячейке
--- таблицы). 20k квартир × ~7 точек = ~140k данных, в gzip ~1-2 МБ.
--- HAVING ≥2: одно-точечные записи (новые квартиры с одним сканом) бесполезны
--- для sparkline, отсекаем сразу — иначе ~30% payload мусор.
-DROP VIEW IF EXISTS flat_sparkline_30d;
-CREATE VIEW flat_sparkline_30d AS
-SELECT
-    flat_id,
-    json_group_array(price) AS prices
-FROM (
-    SELECT flat_id, scan_date, price
-    FROM snapshots
-    WHERE scan_date >= date('now', '-30 days') AND price IS NOT NULL
-    ORDER BY flat_id, scan_date
-)
-GROUP BY flat_id
-HAVING COUNT(*) >= 2;
+-- today_all / today_one_room / flat_sparkline_30d:
+-- объекты создаются ИЗ Python (pik/store.py: _create_views / refresh_materialized)
+-- — единый source-of-truth для SELECT-тел и MSK-окна 30 дней. Тут раньше были
+-- VIEW-определения, но их пришлось вынести, чтобы те же SQL-тела можно было
+-- использовать для CREATE TABLE в refresh_materialized (материализация в конце
+-- скана даёт чтение 50мс вместо 4с view-evaluation в Datasette).

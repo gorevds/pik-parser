@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
 
+from pik import PikParserError
 from pik.developers import ID_NAMESPACE, namespaced_id, stable_int_id
 from pik.geo import CITY_CENTERS, city_from_address, haversine_km
-
 
 log = logging.getLogger("pik.sources")
 
@@ -31,7 +32,7 @@ DEFAULT_UA = (
 _RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 
 
-class SourceError(RuntimeError):
+class SourceError(PikParserError):
     """Сбой получения данных застройщика."""
 
 

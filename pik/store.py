@@ -1,6 +1,9 @@
-from importlib.resources import files
-from typing import Iterable
 import sqlite3
+from collections.abc import Iterable
+from datetime import datetime, timedelta, timezone
+from importlib.resources import files
+
+_MSK = timezone(timedelta(hours=3))
 
 
 _SNAPSHOTS_NEW_COLS = (
@@ -141,7 +144,7 @@ def _assign_nearest_metro(conn: sqlite3.Connection) -> None:
     ).fetchall()
     if not refs:
         return
-    from math import sin, cos, asin, sqrt, pi
+    from math import asin, cos, pi, sqrt
     def d(la1, lo1, la2, lo2):
         p = pi/180
         a = (0.5 - cos((la2-la1)*p)/2
@@ -174,6 +177,185 @@ def _assign_nearest_metro(conn: sqlite3.Connection) -> None:
         )
 
 
+# ============ Materialized views (today_all / today_one_room / sparkline) ===
+#
+# До 2026-05-25 эти три имени были VIEW'ами, вычислявшимися на каждый запрос.
+# При >40k квартир CTE с GROUP BY и json_group_array выдавали 3-5с в
+# Datasette (сам sqlite-CLI делает 0.3с — оверхед на JSON-сериализацию).
+#
+# refresh_materialized() заменяет VIEW → TABLE в конце каждого скана.
+# Чтение становится 50мс вместо нескольких секунд. Atomic swap через
+# transactional rename, чтобы Datasette-reader всегда видел консистентный
+# срез (старый или новый, но не половину).
+#
+# Единый source-of-truth для SELECT-тел: эти строки используются И в
+# apply_schema (создание view'ов на fresh DB) И в refresh_materialized
+# (создание таблиц). Без этого пришлось бы держать SQL в двух местах и
+# ловить дрейф.
+_TODAY_ALL_SELECT = """
+WITH block_latest AS (
+    SELECT f.block_id AS block_id, MAX(s.scan_date) AS scan_date
+    FROM snapshots s
+    JOIN flats f ON f.id = s.flat_id
+    GROUP BY f.block_id
+)
+SELECT
+    f.id                      AS id,
+    COALESCE(b.developer, 'ПИК') AS застройщик,
+    COALESCE(b.name, 'block ' || f.block_id) AS жк,
+    COALESCE(b.city, 'msk')   AS город,
+    b.metro_name              AS метро,
+    CASE b.metro_line_type
+        WHEN 1 THEN 'M'
+        WHEN 2 THEN 'МЦК'
+        WHEN 3 THEN 'МЦД'
+        WHEN 4 THEN 'электр.'
+        ELSE NULL
+    END                       AS тип_транспорта,
+    b.metro_time_foot         AS "мин_пешком",
+    b.metro_line_name         AS линия,
+    b.distance_km             AS "км_от_центра",
+    CASE f.rooms
+        WHEN 'studio' THEN 'студия'
+        WHEN '-1'     THEN 'студия'
+        ELSE f.rooms || 'к'
+    END                       AS комнат,
+    f.is_apartment            AS апартаменты,
+    f.bulk_name               AS корпус,
+    f.section_no              AS секция,
+    f.floor                   AS этаж,
+    f.area                    AS "площадь_м²",
+    COALESCE(s.old_price, s.price) AS базовая_цена,
+    s.promo_price             AS "цена_по_программе",
+    s.base_meter_price        AS "база_за_м²",
+    s.meter_price             AS "по_программе_за_м²",
+    s.has_promo               AS "промо",
+    s.discount_pct            AS "скидка_%",
+    s.mortgage_best_name      AS программа,
+    s.status                  AS статус,
+    s.finish                  AS отделка,
+    f.settlement_date         AS заселение,
+    b.floors_max              AS "этажей_всего",
+    b.address                 AS адрес,
+    f.name                    AS артикул,
+    f.url                     AS ссылка,
+    f.plan_url                AS планировка,
+    s.scan_date               AS дата_среза,
+    f.block_id                AS block_id
+FROM flats f
+JOIN snapshots s ON s.flat_id = f.id
+JOIN block_latest bl ON bl.block_id = f.block_id AND bl.scan_date = s.scan_date
+LEFT JOIN blocks b ON b.id = f.block_id
+"""
+
+_TODAY_ONE_ROOM_SELECT = "SELECT * FROM today_all WHERE комнат = '1к'"
+
+
+def _sparkline_select(cutoff_date: str) -> str:
+    """Подставляет MSK-дату 30 дней назад. До этого было date('now','-30 days')
+    в UTC — на границе МСК ночью окно сдвигалось на сутки, и из sparkline
+    могла пропасть последняя точка.
+    """
+    return f"""
+SELECT
+    flat_id,
+    json_group_array(price) AS prices
+FROM (
+    SELECT flat_id, scan_date, price
+    FROM snapshots
+    WHERE scan_date >= '{cutoff_date}' AND price IS NOT NULL
+    ORDER BY flat_id, scan_date
+)
+GROUP BY flat_id
+HAVING COUNT(*) >= 2
+"""
+
+
+def _ensure_view_or_drop_table(conn: sqlite3.Connection, name: str) -> None:
+    """Подготовка к CREATE VIEW name: если в БД уже сидит TABLE с тем же
+    именем (от прошлого refresh_materialized), сбрасываем её.
+
+    SQLite строг: DROP TABLE на view возвращает «use DROP VIEW», и наоборот.
+    Поэтому смотрим тип в sqlite_master и зовём правильный DROP.
+    """
+    row = conn.execute(
+        "SELECT type FROM sqlite_master WHERE name=?", (name,)
+    ).fetchone()
+    if row is None:
+        return
+    obj_type = row[0]
+    if obj_type == "table":
+        conn.execute(f"DROP TABLE {name}")
+    elif obj_type == "view":
+        conn.execute(f"DROP VIEW {name}")
+
+
+def _create_views(conn: sqlite3.Connection) -> None:
+    """Создаёт today_all / today_one_room / flat_sparkline_30d как VIEW.
+
+    Вызывается из apply_schema на каждом скане. refresh_materialized потом
+    переписывает их в TABLE (быстрее чтение), но во время скана и до его
+    завершения это VIEW — иначе между scan-стартом и scan-концом /pik/today_all
+    отдавал бы 404 или stale-table.
+    """
+    cutoff = (datetime.now(_MSK) - timedelta(days=30)).strftime("%Y-%m-%d")
+    for name, sql in [
+        ("today_all", _TODAY_ALL_SELECT),
+        ("today_one_room", _TODAY_ONE_ROOM_SELECT),
+        ("flat_sparkline_30d", _sparkline_select(cutoff)),
+    ]:
+        _ensure_view_or_drop_table(conn, name)
+        conn.execute(f"CREATE VIEW {name} AS {sql}")
+
+
+def refresh_materialized(conn: sqlite3.Connection) -> None:
+    """Заменяет today_all / today_one_room / flat_sparkline_30d из VIEW в TABLE.
+
+    Вызывать в КОНЦЕ скана, после `upsert()` (иначе материализуем устаревший
+    снапшот). Транзакция атомарна (BEGIN IMMEDIATE): WAL-readers видят либо
+    предыдущую версию целиком, либо новую — никогда промежуточное состояние.
+
+    Идемпотентна: можно вызвать второй раз подряд (первый раз view→table,
+    второй — table→table, обновлённая из base flats/snapshots).
+    """
+    cutoff = (datetime.now(_MSK) - timedelta(days=30)).strftime("%Y-%m-%d")
+    sources = [
+        # ВАЖЕН ПОРЯДОК: today_one_room SELECT'ит из today_all,
+        # поэтому today_all должен сущ. как table к моменту его билда.
+        ("today_all", _TODAY_ALL_SELECT,
+         ["CREATE INDEX idx_today_all_dev ON today_all(застройщик)",
+          "CREATE INDEX idx_today_all_block ON today_all(block_id)"]),
+        ("today_one_room", _TODAY_ONE_ROOM_SELECT, []),
+        ("flat_sparkline_30d", _sparkline_select(cutoff),
+         ["CREATE INDEX idx_spark_flat ON flat_sparkline_30d(flat_id)"]),
+    ]
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    try:
+        # Фаза 1: сносим ВСЕ существующие объекты с этими именами заранее.
+        # Иначе при ALTER TABLE RENAME (SQLite >= 3.25) для today_all SQLite
+        # верифицирует ссылки в today_one_room view и падает на "no such
+        # table". Используем _ensure_view_or_drop_table (он сам различает
+        # view/table по sqlite_master — DROP VIEW на table даёт OperationalError
+        # и наоборот, поэтому простой DROP VIEW IF EXISTS тут не годится).
+        for name, _, _ in sources:
+            _ensure_view_or_drop_table(conn, name)
+        # Фаза 2: для каждого — build _new, drop остатки (`_new` от прерванной
+        # сессии), rename.
+        for name, sel, idxs in sources:
+            cur.execute(f"DROP TABLE IF EXISTS {name}_new")
+            cur.execute(f"CREATE TABLE {name}_new AS {sel}")
+            cur.execute(f"ALTER TABLE {name}_new RENAME TO {name}")
+            # Индексы — после rename, имя ссылается на финальное.
+            # SQLite < 3.35 не переименовывает индексы автоматически.
+            for idx_sql in idxs:
+                cur.execute(idx_sql)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     # WAL: писатель (скан) и читатели (Datasette) не блокируют друг друга.
     # Режим персистентен в файле БД. Для :memory: PRAGMA молча остаётся
@@ -188,6 +370,9 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     # nearest. Выполняется после executescript, чтобы view today_all уже
     # подхватила свежие metro_name через b.metro_name.
     _assign_nearest_metro(conn)
+    # views — единый source-of-truth в Python (см. _TODAY_ALL_SELECT etc.).
+    # На fresh DB создаёт VIEW; через refresh_materialized → TABLE в конце скана.
+    _create_views(conn)
     conn.commit()
 
 
@@ -235,6 +420,33 @@ _FLAT_DEFAULTS = {"is_apartment": 0}
 # snapshots.has_promo: NOT NULL DEFAULT 0 в миграции. Если row пришёл
 # из БД, где колонка ещё не существовала, явный 0 защищает от Integrity.
 _SNAP_DEFAULTS = {"has_promo": 0}
+
+
+def record_scan_run(
+    conn: sqlite3.Connection, *,
+    developer: str, scan_date: str, scan_ts: str,
+    n_blocks: int = 0, n_flats: int = 0,
+    duration_s: float | None = None,
+    status: str = "ok", error_msg: str | None = None,
+) -> None:
+    """Записать результат скана в scan_runs (UPSERT по scan_date+developer).
+
+    Повторный вызов в тот же день затирает прошлый — это нормально
+    (manual rerun должен перезатирать запись). Поле scan_ts всегда — момент
+    ПОСЛЕДНЕГО завершения, который и интересует мониторинг.
+    """
+    conn.execute(
+        "INSERT INTO scan_runs (scan_date, scan_ts, developer, n_blocks, "
+        "n_flats, duration_s, status, error_msg) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(scan_date, developer) DO UPDATE SET "
+        "scan_ts=excluded.scan_ts, n_blocks=excluded.n_blocks, "
+        "n_flats=excluded.n_flats, duration_s=excluded.duration_s, "
+        "status=excluded.status, error_msg=excluded.error_msg",
+        (scan_date, scan_ts, developer, n_blocks, n_flats,
+         duration_s, status, error_msg),
+    )
+    conn.commit()
 
 
 def upsert(

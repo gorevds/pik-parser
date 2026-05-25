@@ -14,17 +14,16 @@ import sqlite3
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from pik.client import PikClient, PikApiError
-from pik.developers import ID_NAMESPACE
-from pik.mapping import to_flat_row, to_snapshot_row
-from pik.store import apply_schema, upsert
-from pik.geo import extract_block_meta
 from pik.blocks_meta import upsert_block_meta
-
+from pik.client import PikApiError, PikClient
+from pik.developers import ID_NAMESPACE
+from pik.geo import extract_block_meta
+from pik.mapping import to_flat_row, to_snapshot_row
+from pik.store import apply_schema, record_scan_run, refresh_materialized, upsert
 
 MSK = timezone(timedelta(hours=3))
 DEFAULT_BLOCK_ID = int(os.environ.get("PIK_BLOCK_ID", 1165))  # Нарвин
@@ -144,6 +143,26 @@ def run_sweep(db_path: Path, block_ids: list[int], *, workers: int) -> int:
                 except Exception:
                     log.exception("unexpected failure for block %d", bid)
                     failed += 1
+        # Перевели today_all/today_one_room/flat_sparkline_30d из VIEW в TABLE
+        # на свежих данных скана. Atomic-swap внутри одной транзакции —
+        # readers Datasette видят либо вчерашний срез, либо сегодняшний.
+        refresh_materialized(conn)
+        # Запись в scan_runs: «PIK» агрегатной записью на весь sweep — поблочно
+        # не пишем чтобы не плодить 70 записей в день. Деталь по блокам и так
+        # доступна через journalctl/snapshots.scan_ts.
+        elapsed = time.monotonic() - started
+        n_flats_total = conn.execute(
+            "SELECT COUNT(*) FROM snapshots WHERE scan_date=?", (scan_date,)
+        ).fetchone()[0]
+        run_status = "ok" if failed == 0 else ("partial" if failed * 2 <= len(block_ids) else "error")
+        record_scan_run(
+            conn, developer="ПИК",
+            scan_date=scan_date, scan_ts=scan_ts,
+            n_blocks=len(block_ids) - failed,
+            n_flats=n_flats_total,
+            duration_s=round(elapsed, 1), status=run_status,
+            error_msg=(None if failed == 0 else f"{failed} of {len(block_ids)} blocks failed"),
+        )
     finally:
         conn.close()
 
