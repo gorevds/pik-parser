@@ -7,6 +7,13 @@ from typing import Optional
 
 _RATE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
 
+# Plausibility range для ипотечной ставки: всё, что выше — это уже не
+# программа банка, а маркетинговое слово вроде «скидка 50%» или
+# «комиссия 0%» (что встречается в нестабильных не-PIK API). Защищает
+# mortgage_min_rate от загрязнения промо-процентами, не ломая корректные
+# «Семейная ипотека 6%» / «IT-ипотека 5%» / «Стандартная 18%».
+_RATE_MIN, _RATE_MAX = 0.5, 35.0
+
 
 def _finish_label(finish) -> Optional[str]:
     if not isinstance(finish, dict):
@@ -24,7 +31,13 @@ def _parse_rate(name: Optional[str]) -> Optional[float]:
     match = _RATE_RE.search(name)
     if not match:
         return None
-    return float(match.group(1).replace(",", "."))
+    rate = float(match.group(1).replace(",", "."))
+    # Отсекаем неправдоподобные ставки. Без этой проверки строка «скидка 50%»
+    # из maркетингового описания трактовалась бы как «ипотека под 50%»,
+    # и mortgage_min_rate выдавал бы аномальные значения в today_all.
+    if not _RATE_MIN <= rate <= _RATE_MAX:
+        return None
+    return rate
 
 
 def _best_mortgage(item: dict) -> tuple[Optional[float], Optional[str]]:
