@@ -1,6 +1,9 @@
 [Unit]
-Description=Daily price scan for non-PIK developers (ФСК, Донстрой, А101, Level, Абсолют, MR Group)
-After=network.target
+Description=Daily price scan for non-PIK developers (ФСК, Донстрой, А101, Level, Абсолют, MR Group, Гранель, Инград, Брусника)
+After=network.target pik-scan.service
+# Defensive: если кто-то запустит оба `systemctl start pik-scan.service
+# pik-scan-dev.service` одновременно, After= даст systemd ordering hint.
+# Основной триггер — OnSuccess/OnFailure в pik-scan.service.
 
 [Service]
 Type=oneshot

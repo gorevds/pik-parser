@@ -33,7 +33,18 @@ install -m 644 "$APP_DIR/deploy/pik-scan.service"     /etc/systemd/system/pik-sc
 install -m 644 "$APP_DIR/deploy/pik-scan.timer"       /etc/systemd/system/pik-scan.timer
 install -m 644 "$APP_DIR/deploy/pik-scan-dev.service" /etc/systemd/system/pik-scan-dev.service
 install -m 644 "$APP_DIR/deploy/pik-scan-dev.timer"   /etc/systemd/system/pik-scan-dev.timer
+install -m 644 "$APP_DIR/deploy/pik-backup.service"   /etc/systemd/system/pik-backup.service
+install -m 644 "$APP_DIR/deploy/pik-backup.timer"     /etc/systemd/system/pik-backup.timer
 systemctl daemon-reload
+
+# pik-scan-dev переехал с собственного 06:30-таймера на OnSuccess/OnFailure-
+# триггер из pik-scan.service (см. unit-файл). Это гарантирует сериализацию
+# writer'ов независимо от длительности скана. На существующих машинах
+# старый таймер нужно выключить, иначе он отстреливает второй раз в 06:30.
+if systemctl is-enabled --quiet pik-scan-dev.timer 2>/dev/null; then
+  systemctl disable --now pik-scan-dev.timer
+  echo ">>> pik-scan-dev.timer отключён (теперь чейнится из pik-scan.service)"
+fi
 
 # 5. Первый прогон сканов (обновляет схему + наполняет БД)
 systemctl start pik-scan.service
@@ -44,10 +55,13 @@ journalctl -u pik-scan-dev.service --no-pager | tail -20
 # Перезапуск Datasette после изменения схемы (он держит соединение с pik.db)
 systemctl restart pik.service 2>/dev/null || true
 
-# 6. Поднимаем datasette + ежедневный таймер
+# 6. Поднимаем datasette + ежедневный таймер + бэкап-таймер
 systemctl enable --now pik.service
 systemctl enable --now pik-scan.timer
-systemctl enable --now pik-scan-dev.timer
+systemctl enable --now pik-backup.timer
+# pik-scan-dev.timer НЕ enable'им: pik-scan-dev запускается из pik-scan
+# через OnSuccess=. Файл таймера оставлен в системе для возможности
+# ручного `systemctl start pik-scan-dev.service`.
 systemctl status pik.service --no-pager | head -10
 
 # 7. Nginx — двухшаговая раскатка для первичного выпуска TLS-сертификата
@@ -61,7 +75,7 @@ if [ ! -e /etc/letsencrypt/live/pik.gorev.space/fullchain.pem ]; then
   systemctl reload nginx
 
   certbot certonly --webroot -w /var/www/certbot -d pik.gorev.space \
-    --non-interactive --agree-tos --email "${LETSENCRYPT_EMAIL:-oscar@dolotov.com}"
+    --non-interactive --agree-tos --email "${LETSENCRYPT_EMAIL:-dmitrii@gorev.space}"
 fi
 
 install -m 644 "$APP_DIR/deploy/nginx-pik.gorev.space.conf" /etc/nginx/sites-available/pik.gorev.space

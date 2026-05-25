@@ -1,6 +1,13 @@
 [Unit]
 Description=PIK daily price scan (all known blocks)
 After=network.target
+# Чейним второй сканер: pik-scan-dev стартует только когда мы закончили,
+# успешно или нет. Раньше оба таймера (06:00 и 06:30 ±300с rand) могли
+# наложиться и драться за единственного writer'а pik.db (writer
+# contention в WAL = busy_timeout 30с и риск таймаута). Сейчас
+# сериализация гарантирована независимо от длительности скана.
+OnSuccess=pik-scan-dev.service
+OnFailure=pik-scan-dev.service
 
 [Service]
 Type=oneshot

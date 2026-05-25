@@ -1,0 +1,14 @@
+[Unit]
+Description=Run pik-backup daily at 05:00 MSK (перед сканами в 06:00)
+
+[Timer]
+# 05:00 МСК — за час до первого скана. Гарантирует, что в копии будут
+# данные на конец прошлых суток в стабильном виде (никто не пишет).
+# Persistent=true — поймать пропущенный запуск (например, машина была
+# выключена) и сразу запустить при следующем включении.
+OnCalendar=*-*-* 05:00:00 Europe/Moscow
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
