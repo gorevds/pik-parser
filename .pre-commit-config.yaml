@@ -16,4 +16,7 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
-        args: [--maxkb=500]   # 500КБ — порог; БД и бэкапы в git не лезут (excluded)
+        # 1000КБ — порог; БД и бэкапы в git не лезут (.gitignore их режет).
+        # Голден-fixture'ы JSON-ответов от больших API могут перевалить за
+        # 500КБ — поднимаем порог, чтобы запас был.
+        args: [--maxkb=1000]

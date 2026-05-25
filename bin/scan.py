@@ -123,6 +123,7 @@ def run_sweep(db_path: Path, block_ids: list[int], *, workers: int) -> int:
 
     conn = sqlite3.connect(db_path)
     failed = 0
+    err_msg: str | None = None
     started = time.monotonic()
     try:
         conn.execute("PRAGMA foreign_keys = ON")
@@ -147,23 +148,48 @@ def run_sweep(db_path: Path, block_ids: list[int], *, workers: int) -> int:
         # на свежих данных скана. Atomic-swap внутри одной транзакции —
         # readers Datasette видят либо вчерашний срез, либо сегодняшний.
         refresh_materialized(conn)
-        # Запись в scan_runs: «PIK» агрегатной записью на весь sweep — поблочно
-        # не пишем чтобы не плодить 70 записей в день. Деталь по блокам и так
-        # доступна через journalctl/snapshots.scan_ts.
-        elapsed = time.monotonic() - started
-        n_flats_total = conn.execute(
-            "SELECT COUNT(*) FROM snapshots WHERE scan_date=?", (scan_date,)
-        ).fetchone()[0]
-        run_status = "ok" if failed == 0 else ("partial" if failed * 2 <= len(block_ids) else "error")
-        record_scan_run(
-            conn, developer="ПИК",
-            scan_date=scan_date, scan_ts=scan_ts,
-            n_blocks=len(block_ids) - failed,
-            n_flats=n_flats_total,
-            duration_s=round(elapsed, 1), status=run_status,
-            error_msg=(None if failed == 0 else f"{failed} of {len(block_ids)} blocks failed"),
-        )
+    except Exception as exc:
+        err_msg = f"{type(exc).__name__}: {exc}"[:500]
+        raise
     finally:
+        # scan_runs пишется ВСЕГДА: успех, частичный сбой, фатальное
+        # исключение в apply_schema/refresh_materialized. Без finally
+        # ловится только happy-path, и алерт по stale-data ослеп в момент,
+        # когда он нужен больше всего. Зеркало scan_dev.py-паттерна.
+        try:
+            elapsed = time.monotonic() - started
+            # COUNT только по PIK-блокам (id < ID_NAMESPACE), иначе если
+            # pik-scan-dev уже отписался сегодня (re-run сценарий),
+            # n_flats_total включал бы 26k чужих квартир и портил
+            # «scanned X flats today» метрику.
+            n_flats_total = conn.execute(
+                "SELECT COUNT(*) FROM snapshots s "
+                "JOIN flats f ON f.id = s.flat_id "
+                "WHERE s.scan_date=? AND f.block_id < ?",
+                (scan_date, ID_NAMESPACE),
+            ).fetchone()[0]
+            if err_msg is not None:
+                run_status = "error"
+                final_err = err_msg
+            elif failed == 0:
+                run_status = "ok"
+                final_err = None
+            elif failed * 2 <= len(block_ids):
+                run_status = "partial"
+                final_err = f"{failed} of {len(block_ids)} blocks failed"
+            else:
+                run_status = "error"
+                final_err = f"{failed} of {len(block_ids)} blocks failed"
+            record_scan_run(
+                conn, developer="ПИК",
+                scan_date=scan_date, scan_ts=scan_ts,
+                n_blocks=len(block_ids) - failed,
+                n_flats=n_flats_total,
+                duration_s=round(elapsed, 1), status=run_status,
+                error_msg=final_err,
+            )
+        except Exception:
+            log.exception("scan: не удалось записать scan_runs")
         conn.close()
 
     elapsed = time.monotonic() - started

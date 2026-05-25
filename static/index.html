@@ -1633,6 +1633,19 @@ function renderStats(rows) {
   if (!rows.length) return "<span>0 квартир</span>";
   const promo = rows.filter(r => r["промо"] === 1).length;
   const prices = rows.map(r => r["базовая_цена"]).filter(Boolean);
+  // prices.length === 0 при rows.length > 0 — реальный случай: набор
+  // строк с null-ценой (старые архивные снапшоты или вышедшие из продажи
+  // лоты). Раньше выводили «0 – 0 ₽» и NaN в average; теперь честно «—».
+  if (prices.length === 0) {
+    const date0 = rows[0]["дата_среза"] || "—";
+    return `
+      <span><b>${new Set(rows.map(r => r["жк"])).size}</b> ЖК</span>
+      <span><b>${rows.length}</b> квартир</span>
+      <span>цена: <b>—</b></span>
+      <span>со скидкой: <b>${promo}</b></span>
+      <span>срез: <b>${date0}</b></span>
+    `;
+  }
   const min = arrayMin(prices), max = arrayMax(prices);
   const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
   const date = rows[0]["дата_среза"] || "—";
