@@ -12,15 +12,14 @@ import re
 import sqlite3
 import time
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import requests
 
 from .client import DEFAULT_UA
 from .mapping import to_flat_row, to_snapshot_row
 from .store import apply_schema, upsert
-
 
 log = logging.getLogger("pik.backfill")
 

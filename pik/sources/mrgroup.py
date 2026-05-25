@@ -26,7 +26,6 @@ from pik.sources.base import (
     request_text,
 )
 
-
 DEVELOPER = "MR Group"
 _GOOGLEBOT_UA = (
     "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"

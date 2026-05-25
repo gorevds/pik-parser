@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
-
 
 _RATE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
 
@@ -15,7 +13,7 @@ _RATE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
 _RATE_MIN, _RATE_MAX = 0.5, 35.0
 
 
-def _finish_label(finish) -> Optional[str]:
+def _finish_label(finish) -> str | None:
     if not isinstance(finish, dict):
         return None
     if finish.get("whiteBox"):
@@ -25,7 +23,7 @@ def _finish_label(finish) -> Optional[str]:
     return "Без отделки"
 
 
-def _parse_rate(name: Optional[str]) -> Optional[float]:
+def _parse_rate(name: str | None) -> float | None:
     if not name:
         return None
     match = _RATE_RE.search(name)
@@ -40,7 +38,7 @@ def _parse_rate(name: Optional[str]) -> Optional[float]:
     return rate
 
 
-def _best_mortgage(item: dict) -> tuple[Optional[float], Optional[str]]:
+def _best_mortgage(item: dict) -> tuple[float | None, str | None]:
     benefits = item.get("benefits") or {}
     if not isinstance(benefits, dict):
         return None, None

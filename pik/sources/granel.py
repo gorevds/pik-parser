@@ -21,7 +21,6 @@ from pik.sources.base import (
     safe_next_url,
 )
 
-
 DEVELOPER = "Гранель"
 _FLATS_URL = "https://granelle.ru/api/flats/"
 _PROJECTS_URL = "https://granelle.ru/api/projects/"

@@ -3,8 +3,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 from pik.developers import ID_NAMESPACE, namespaced_id
 from pik.sources import fsk
 from pik.sources.base import (
@@ -13,7 +11,6 @@ from pik.sources.base import (
     NormFlat,
     _detect_discount,
     build_rows,
-    safe_next_url,
     to_global_id,
 )
 from pik.store import apply_schema
@@ -587,8 +584,10 @@ def test_absolut_collect_cursor_pagination(monkeypatch):
 
 # --- mrgroup ------------------------------------------------------------
 
-from pik.sources import mrgroup  # noqa: E402
-from pik.sources import granel  # noqa: E402
+from pik.sources import (
+    granel,  # noqa: E402
+    mrgroup,  # noqa: E402
+)
 
 
 def test_granel_coords_parses_string_pair():

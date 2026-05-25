@@ -1,6 +1,5 @@
 from pik.store import apply_schema, upsert
 
-
 SAMPLE_FLAT = {
     "id": 100, "guid": "g-100", "block_id": 1165, "bulk_id": 10397,
     "section_id": 23643, "layout_id": 60971, "bulk_name": "Корпус 1.3",

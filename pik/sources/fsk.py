@@ -19,7 +19,6 @@ from pik.sources.base import (
     request_json,
 )
 
-
 DEVELOPER = "ГК ФСК"
 _COMPLEX_URL = "https://fsk.ru/api/complex/"
 _FLATS_URL = "https://fsk.ru/api/v3/flats/all"

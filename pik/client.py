@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import time
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 import requests
-
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "

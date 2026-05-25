@@ -20,7 +20,6 @@ from pik.sources.base import (
     safe_next_url,
 )
 
-
 DEVELOPER = "Level"
 _FLATS_URL = "https://level.ru/api/flat/"
 _PROJECTS_URL = "https://level.ru/api/project/"

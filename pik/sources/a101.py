@@ -19,7 +19,6 @@ from pik.sources.base import (
     safe_next_url,
 )
 
-
 DEVELOPER = "А101"
 _FLATS_URL = "https://a101.ru/api/flats/"
 _PROJECTS_URL = "https://a101.ru/api/projects/"

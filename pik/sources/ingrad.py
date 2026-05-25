@@ -23,7 +23,6 @@ from pik.sources.base import (
     request_json,
 )
 
-
 DEVELOPER = "Инград"
 _FLATS_URL = "https://new-api.ingrad.ru/api/flats"
 # www.ingrad.ru канонический — без `www` отдаёт 301 redirect.

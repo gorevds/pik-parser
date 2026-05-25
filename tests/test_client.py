@@ -1,7 +1,6 @@
 import responses
 
-from pik.client import PikClient, PikApiError
-
+from pik.client import PikApiError, PikClient
 
 BLOCK_URL = "https://api.pik.ru/v2/flat"
 

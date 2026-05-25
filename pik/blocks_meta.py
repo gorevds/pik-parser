@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Optional
-
 
 _BLOCK_META_COLS = (
     "metro_name", "metro_line_name", "metro_line_type",
@@ -15,7 +13,7 @@ _BLOCK_META_COLS = (
 
 def upsert_block_meta(
     conn: sqlite3.Connection, *,
-    block_id: int, name: str, slug: Optional[str], meta: dict, scan_ts: str,
+    block_id: int, name: str, slug: str | None, meta: dict, scan_ts: str,
     developer: str = "ПИК",
     commit: bool = True,
 ) -> None:

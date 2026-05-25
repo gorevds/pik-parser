@@ -1,7 +1,10 @@
-import math
 from pik.geo import (
-    extract_block_meta, haversine_km, primary_metro, derive_city,
-    city_from_address, CITY_CENTERS,
+    CITY_CENTERS,
+    city_from_address,
+    derive_city,
+    extract_block_meta,
+    haversine_km,
+    primary_metro,
 )
 
 

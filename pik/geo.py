@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
-
 
 # Центры городов (для расчёта дистанции через haversine)
 CITY_CENTERS: dict[str, tuple[float, float]] = {
@@ -119,7 +117,7 @@ def _to_float(v):
         return None
 
 
-def primary_metro(stations: list) -> Optional[dict]:
+def primary_metro(stations: list) -> dict | None:
     """Вернуть самую близкую станцию по timeOnFoot."""
     if not stations:
         return None
@@ -129,7 +127,7 @@ def primary_metro(stations: list) -> Optional[dict]:
     return sorted(stations, key=fkey)[0]
 
 
-def derive_city(slug: Optional[str]) -> str:
+def derive_city(slug: str | None) -> str:
     """LEGACY: slug 'kazan/siberovo' -> 'kazan'; 'narvin' -> 'msk'.
 
     Историческая логика: PIK теоретически мог отдавать slug с префиксом города,
@@ -144,7 +142,7 @@ def derive_city(slug: Optional[str]) -> str:
     return "msk"
 
 
-def extract_block_meta(data: dict, *, slug: Optional[str] = None) -> dict:
+def extract_block_meta(data: dict, *, slug: str | None = None) -> dict:
     """Из v2/flat-payload (или flat-item) достать координаты, метро, адрес.
 
     Принимает либо полный response payload `{block: {…}, flats: […]}`, либо

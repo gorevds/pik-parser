@@ -8,16 +8,20 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
 
 from .blocks_meta import _BLOCK_META_COLS, upsert_block_meta
 from .store import (
-    _FLAT_COLS, _FLAT_DEFAULTS, _SNAP_COLS, _SNAP_DEFAULTS,
-    _FLATS_INSERT, _SNAP_INSERT, apply_schema,
+    _FLAT_COLS,
+    _FLAT_DEFAULTS,
+    _FLATS_INSERT,
+    _SNAP_COLS,
+    _SNAP_DEFAULTS,
+    _SNAP_INSERT,
+    apply_schema,
 )
-
 
 _MSK = timezone(timedelta(hours=3))
 
@@ -74,7 +78,7 @@ def merge_databases(
                 cur.execute("BEGIN")
                 try:
                     for r in rows:
-                        rec = dict(zip(col_names, r))
+                        rec = dict(zip(col_names, r, strict=False))
                         meta = {c: rec.get(c) for c in meta_in_src}
                         upsert_block_meta(
                             conn, block_id=rec["id"], name=rec["name"],
@@ -103,7 +107,7 @@ def merge_databases(
                     cur.execute(
                         f"SELECT {', '.join(cols_to_pull)} FROM src.flats"
                     )
-                    flat_rows = [dict(zip(cols_to_pull, r)) for r in cur.fetchall()]
+                    flat_rows = [dict(zip(cols_to_pull, r, strict=False)) for r in cur.fetchall()]
                     for row in flat_rows:
                         # 1) недостающие колонки — None (либо дефолт для NOT NULL)
                         for col in _FLAT_COLS:
@@ -126,7 +130,7 @@ def merge_databases(
                     cur.execute(
                         f"SELECT {', '.join(cols_to_pull)} FROM src.snapshots"
                     )
-                    snap_rows = [dict(zip(cols_to_pull, r)) for r in cur.fetchall()]
+                    snap_rows = [dict(zip(cols_to_pull, r, strict=False)) for r in cur.fetchall()]
                     for row in snap_rows:
                         for col in _SNAP_COLS:
                             row.setdefault(col, _SNAP_DEFAULTS.get(col))

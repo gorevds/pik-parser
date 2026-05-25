@@ -17,6 +17,7 @@ Homepage = "https://github.com/gorevds/pik-parser"
 [project.optional-dependencies]
 serve = ["datasette>=0.65,<1.0"]
 test = ["pytest>=8.0", "responses>=0.25"]
+dev = ["pytest>=8.0", "responses>=0.25", "ruff>=0.6", "mypy>=1.10"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -28,3 +29,36 @@ packages = ["pik"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+# Ruff: быстрый линтер + форматтер. Только то, что регулярно ловит реальные
+# баги, без воинствующего стиля — наш код в большинстве своём уже close to
+# ruff defaults. select = E (errors), F (pyflakes), W (warnings), I (isort).
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["venv", "pik_narvin_parser.egg-info"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # long lines — есть в комментариях с примерами URL/JSON
+    "E731",  # lambda assignment — иногда читабельнее def
+    "E701",  # multiple statements on one line — `if x: return None` гайды лаконичны
+    "B008",  # function call as default — нам не страшно
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E712", "B011", "E402"]  # assert ==, assert False, late-bound imports
+"bin/*" = ["E402"]                      # imports после env-setup
+
+# Mypy: строгий по nullables, мягкий по untyped-imports (datasette нет stubs).
+[tool.mypy]
+python_version = "3.10"
+strict_optional = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+exclude = ["venv/", "pik_narvin_parser\\.egg-info/"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

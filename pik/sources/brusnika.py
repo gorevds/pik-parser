@@ -23,11 +23,9 @@ from pik.sources.base import (
     CollectResult,
     NormBlock,
     NormFlat,
-    SourceError,
     make_session,
     request_json,
 )
-
 
 DEVELOPER = "Брусника"
 

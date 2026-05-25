@@ -18,7 +18,6 @@ from pik.sources.base import (
     request_json,
 )
 
-
 DEVELOPER = "Абсолют"
 _GRAPHQL_URL = "https://www.absrealty.ru/graphql/"
 _PAGE_SIZE = 100

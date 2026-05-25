@@ -26,7 +26,6 @@ from pik.sources.base import (
     request_text,
 )
 
-
 DEVELOPER = "Донстрой"
 _FLATS_URL = "https://donstroy.moscow/api/v1/flatssearch/choose_params_api_flats/"
 _OBJECT_URL_FMT = "https://donstroy.moscow/objects/{slug}/"
