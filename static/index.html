@@ -971,7 +971,8 @@ function renderInlineSparkline(history) {
     return `<span style="color:#cbd5e1">·</span>`;
   }
   const W = 80, H = 22;
-  const yMin = Math.min(...history), yMax = Math.max(...history);
+  // arrayMin/Max — без spread, защита от V8/Safari arg-limit при больших rows
+  const yMin = arrayMin(history), yMax = arrayMax(history);
   const yRng = (yMax - yMin) || 1;
   const n = history.length;
   const pts = history.map((y, i) =>
@@ -1228,8 +1229,8 @@ function drawSparkline(svg, snapshots) {
     return;
   }
   const xs = data.map(d => d.x), ys = data.map(d => d.y);
-  const xMin = Math.min(...xs), xMax = Math.max(...xs);
-  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const xMin = arrayMin(xs), xMax = arrayMax(xs);
+  const yMin = arrayMin(ys), yMax = arrayMax(ys);
   const xRng = (xMax - xMin) || 1;
   const yRng = (yMax - yMin) || 1;
   const tx = (x) => PAD_L + (x - xMin) / xRng * (W - PAD_L - PAD_R);
@@ -1372,13 +1373,13 @@ function renderMapMarkers(rows) {
     stats.push({
       block: blocksGeo[bid],
       count: brs.length,
-      minPrice: Math.min(...brs.map(flatPrice).filter(Boolean)),
+      minPrice: arrayMin(brs.map(flatPrice).filter(Boolean)),
       avgPpm: ppm.reduce((a, b) => a + b, 0) / ppm.length,
     });
   }
   if (!stats.length) return;
   const ppms = stats.map(s => s.avgPpm);
-  const minPpm = Math.min(...ppms), maxPpm = Math.max(...ppms);
+  const minPpm = arrayMin(ppms), maxPpm = arrayMax(ppms);
   const range = (maxPpm - minPpm) || 1;
   // экранирование для balloon HTML (имена ЖК могут иметь спецсимволы)
   const esc = (s) => String(s).replace(/[&<>"']/g, c =>
@@ -1612,11 +1613,27 @@ function rebuildZkDropdown(rows) {
   }
 }
 
+// Math.min(...arr) / Math.max(...arr) спред-вариант роняет JS engine
+// при больших массивах: V8 limit ~125k аргументов, Safari ~65k. На лэндинге
+// 36k+ квартир уже близко к границе; через год при росте до 70k+
+// один запрос upgrade'нул бы страницу в RangeError. Используем reduce
+// — O(n) проход без раскрытия в стек.
+function arrayMin(arr) {
+  let m = Infinity;
+  for (const x of arr) if (x < m) m = x;
+  return m === Infinity ? 0 : m;
+}
+function arrayMax(arr) {
+  let m = -Infinity;
+  for (const x of arr) if (x > m) m = x;
+  return m === -Infinity ? 0 : m;
+}
+
 function renderStats(rows) {
   if (!rows.length) return "<span>0 квартир</span>";
   const promo = rows.filter(r => r["промо"] === 1).length;
   const prices = rows.map(r => r["базовая_цена"]).filter(Boolean);
-  const min = Math.min(...prices), max = Math.max(...prices);
+  const min = arrayMin(prices), max = arrayMax(prices);
   const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
   const date = rows[0]["дата_среза"] || "—";
   const zkCount = new Set(rows.map(r => r["жк"])).size;
