@@ -51,6 +51,15 @@ class NormFlat:
 
     `rooms`: 0 — студия, иначе число комнат.
     `meter_price`: цена за м²; если None — считается как price/area.
+
+    Дополнительные опциональные поля (по мере появления у источников):
+    `ceiling_height`, `area_kitchen`, `area_living` — фактически только
+    PIK API их даёт. У других — None.
+    `mortgage_min_rate`/`mortgage_best_name` — best-rate программа из
+    benefits.mortgage (PIK; у остальных нет данных в листинге).
+    `pdf_url` — ссылка на PDF-планировку (PIK).
+    `bulk_id`/`section_id`/`layout_id` — внутренние id корпуса/секции/
+    планировки (PIK); другим источникам не нужны (они в bulk_name/section_no).
     """
     native_id: int | str
     native_block_id: int | str
@@ -69,6 +78,27 @@ class NormFlat:
     number: str | None = None
     plan_url: str | None = None
     is_apartment: bool = False
+    # PIK-specific (другие источники их не заполняют):
+    ceiling_height: float | None = None
+    area_kitchen: float | None = None
+    area_living: float | None = None
+    mortgage_min_rate: float | None = None
+    mortgage_best_name: str | None = None
+    pdf_url: str | None = None
+    bulk_id: int | None = None
+    section_id: int | None = None
+    layout_id: int | None = None
+    # Скан-time поля (PIK даёт явный updated_at; используется для аналитики
+    # «когда у этой квартиры реально менялась цена»):
+    updated_at: str | None = None
+    # Промо-семантика для PIK: API не отдаёт old_price (sticker), но даёт
+    # meter_price (с программой) и price (нал). У ПИК-скана исторически
+    # promo_price = round(meter_price * area). Чтобы build_rows не дрейфовал
+    # от двух семантик, источник может сам передать готовый promo_price и
+    # discount_pct; для non-PIK адаптеров эти поля None и работает обычная
+    # old_price-based детекция.
+    promo_price: int | None = None
+    discount_pct: float | None = None
 
 
 @dataclass
@@ -217,9 +247,9 @@ def build_rows(
             "id": gid,
             "guid": str(f.native_id),
             "block_id": block_gid,
-            "bulk_id": None,
-            "section_id": None,
-            "layout_id": None,
+            "bulk_id": f.bulk_id,
+            "section_id": f.section_id,
+            "layout_id": f.layout_id,
             "bulk_name": f.bulk_name,
             "section_no": f.section_no,
             "floor": f.floor,
@@ -229,17 +259,34 @@ def build_rows(
             "is_studio": 1 if rooms == 0 else 0,
             "is_apartment": 1 if is_apart else 0,
             "area": area,
-            "area_kitchen": None,
-            "area_living": None,
+            "area_kitchen": f.area_kitchen,
+            "area_living": f.area_living,
             "number": f.number,
             "name": f.number,
             "url": f.url,
-            "pdf_url": None,
+            "pdf_url": f.pdf_url,
             "plan_url": f.plan_url,
-            "ceiling_height": None,
+            "ceiling_height": f.ceiling_height,
             "settlement_date": f.settlement_date,
             "first_seen": scan_date,
         })
+        # Промо-логика — две семантики:
+        # 1) Источник дал явный promo_price (PIK, считает adapter): берём
+        #    его + discount_pct из adapter'а если есть, иначе вычисляем.
+        # 2) Источник дал old_price > price (FSK, MR Group, Гранель, …):
+        #    promo_price = price (нет отдельной «программы»), discount =
+        #    old_price → price.
+        # 3) Ни того, ни другого: promo_price = price, has_promo = 0.
+        if f.promo_price is not None:
+            promo_price = f.promo_price
+            if f.discount_pct is not None:
+                disc_pct = f.discount_pct
+                has_promo = 1 if disc_pct >= 0.5 else 0
+            elif price and promo_price < price:
+                disc_pct = round((price - promo_price) / price * 100, 2)
+                has_promo = 1 if disc_pct >= 0.5 else 0
+        else:
+            promo_price = price  # default = «без программы»
         snap_rows.append({
             "flat_id": gid,
             "scan_date": scan_date,
@@ -248,15 +295,15 @@ def build_rows(
             "price": price,
             "meter_price": meter_price,
             "base_meter_price": base_meter,
-            "promo_price": price,
+            "promo_price": promo_price,
             "discount_pct": disc_pct,
             "has_promo": has_promo,
             "old_price": f.old_price,
             "discount": disc_abs,
             "finish": f.finish,
-            "mortgage_min_rate": None,
-            "mortgage_best_name": None,
-            "updated_at": None,
+            "mortgage_min_rate": f.mortgage_min_rate,
+            "mortgage_best_name": f.mortgage_best_name,
+            "updated_at": f.updated_at,
         })
 
     if skipped_noid or skipped_orphan or skipped_dup:
