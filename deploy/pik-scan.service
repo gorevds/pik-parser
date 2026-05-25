@@ -1,13 +1,11 @@
 [Unit]
-Description=PIK daily price scan (all known blocks)
+Description=Daily price scan — all 10 developers (PIK + 9 others) → SQLite
 After=network.target
-# Чейним второй сканер: pik-scan-dev стартует только когда мы закончили,
-# успешно или нет. Раньше оба таймера (06:00 и 06:30 ±300с rand) могли
-# наложиться и драться за единственного writer'а pik.db (writer
-# contention в WAL = busy_timeout 30с и риск таймаута). Сейчас
-# сериализация гарантирована независимо от длительности скана.
-OnSuccess=pik-scan-dev.service
-OnFailure=pik-scan-dev.service
+# До R5 рефактора (2026-05-25) было два юнита: pik-scan (только ПИК) и
+# pik-scan-dev (только не-ПИК), скованных OnSuccess-цепью. После R1+R5
+# scan_dev обрабатывает все 10 застройщиков одной командой — двух юнитов
+# больше не нужно. install.sh удаляет pik-scan-dev.{service,timer} на
+# upgrade. Имя «pik-scan» оставлено как label — деплоймент-имя.
 
 [Service]
 Type=oneshot
@@ -15,7 +13,10 @@ User=pik
 Group=pik
 WorkingDirectory=/opt/pik
 Environment=TZ=Europe/Moscow
-ExecStart=/opt/pik/venv/bin/python -m bin.scan --db /opt/pik/data/pik.db --all-blocks
+# --all обходит всех 10 застройщиков из реестра pik.sources.* параллельно
+# (--workers=6). ПИК через bin.sources.pik (новый адаптер) — никаких
+# отдельных команд.
+ExecStart=/opt/pik/venv/bin/python -m bin.scan_dev --db /opt/pik/data/pik.db --all
 StandardOutput=journal
 StandardError=journal
 

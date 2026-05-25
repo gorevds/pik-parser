@@ -1,12 +1,15 @@
-"""Сканер не-PIK застройщиков → SQLite.
+"""Унифицированный ежедневный сканер всех застройщиков → SQLite.
 
-У ПИК свой сканер (bin/scan.py) c постранично-параллельным обходом. Прочие
-застройщики отдают данные иначе (REST/GraphQL/HTML), но единообразно: каждый
-модуль pik/sources/* возвращает CollectResult, который складывается в те же
+10 источников (PIK + 9 других) идут через один реестр SOURCES. Каждый модуль
+pik/sources/* возвращает CollectResult, который складывается в общие
 таблицы blocks/flats/snapshots с глобально-уникальными id.
 
   python -m bin.scan_dev --db data/pik.db --developer "ГК ФСК"
-  python -m bin.scan_dev --db data/pik.db --all          # все застройщики параллельно
+  python -m bin.scan_dev --db data/pik.db --developer "ПИК"
+  python -m bin.scan_dev --db data/pik.db --all           # все 10 параллельно
+
+До 2026-05-25 был отдельный bin/scan.py для PIK и bin/scan_dev.py для
+не-PIK. Слияние: см. docs/refactor-de-pik-plan.md.
 """
 from __future__ import annotations
 
@@ -21,15 +24,53 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pik.blocks_meta import upsert_block_meta
-from pik.developers import DEVELOPERS
-from pik.sources import a101, absolut, brusnika, donstroy, fsk, granel, ingrad, level, mrgroup
+from pik.developers import DEVELOPERS, ID_NAMESPACE
+from pik.sources import (
+    a101,
+    absolut,
+    brusnika,
+    donstroy,
+    fsk,
+    granel,
+    ingrad,
+    level,
+    mrgroup,
+)
+from pik.sources import pik as pik_source
 from pik.sources.base import CollectResult, SourceError, build_rows
 from pik.store import apply_schema, record_scan_run, refresh_materialized, upsert
 
 MSK = timezone(timedelta(hours=3))
 
-# Реестр источников: имя застройщика → функция обхода.
+
+def _pik_collect_for_known_blocks(db_path: Path) -> CollectResult:
+    """PIK-обёртка для уеных в SOURCES dict (signature без аргументов).
+
+    PIK API не отдаёт каталог блоков — список приходит из таблицы `blocks`
+    (где developer='ПИК'), куда они попадают через первый ручной скан или
+    backfill. Без блоков в БД — нечего сканировать; возвращаем пустой
+    CollectResult, scan_runs запишет n_blocks=0 и алерт это увидит.
+    """
+    log = logging.getLogger("pik.scan_dev")
+    if not db_path.exists():
+        log.warning("ПИК: БД %s не существует, нечего сканировать", db_path)
+        return CollectResult(blocks=[], flats=[])
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM blocks WHERE developer='ПИК' AND id < ? ORDER BY id",
+            (ID_NAMESPACE,),
+        ).fetchall()
+    block_ids = [r[0] for r in rows]
+    if not block_ids:
+        log.warning("ПИК: в БД нет блоков с developer='ПИК', нечего сканировать")
+        return CollectResult(blocks=[], flats=[])
+    return pik_source.collect(block_ids=block_ids)
+
+
+# Реестр источников: имя застройщика → функция обхода (без аргументов).
+# PIK обёрнут closure с db_path — он подставляется в main() через partial-bind.
 SOURCES: dict[str, Callable[[], CollectResult]] = {
+    pik_source.DEVELOPER: lambda: CollectResult(blocks=[], flats=[]),  # placeholder, заменится в main()
     fsk.DEVELOPER: fsk.collect,
     donstroy.DEVELOPER: donstroy.collect,
     a101.DEVELOPER: a101.collect,
@@ -190,6 +231,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Число параллельных воркеров для --all (default: 6)",
     )
     args = parser.parse_args(argv)
+
+    # Late-bind PIK обёртки к фактическому db_path (placeholder в registry
+    # заменяется лямбдой, которая знает путь к БД). Делаем здесь, а не на
+    # модуль-loadtime, чтобы тесты могли monkeypatch SOURCES["ПИК"] на
+    # fake-функцию без чтения реальной БД.
+    SOURCES[pik_source.DEVELOPER] = lambda: _pik_collect_for_known_blocks(args.db)
 
     if args.all:
         developers = list(SOURCES)

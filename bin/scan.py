@@ -1,265 +1,59 @@
-"""Однопроходный сканер: api.pik.ru → SQLite.
+"""DEPRECATED shim: оставлен для обратной совместимости с pik-scan.service'ом
+старых деплоев и привычных command-line вызовов. Сразу делегирует в
+`bin.scan_dev`, который теперь — единая точка входа для всех 10
+застройщиков, включая ПИК.
 
-По умолчанию сканирует ЖК Нарвин (block_id=1165). Любой другой блок —
-через --block-id или env-var PIK_BLOCK_ID. Флаг --all-blocks обходит все
-ЖК, уже известные базе (таблица blocks); фетч идёт параллельно (--workers),
-запись в SQLite — сериализованно в одном потоке.
+ЛОГИКА:
+  python -m bin.scan --all-blocks            → bin.scan_dev --developer "ПИК"
+  python -m bin.scan --block-id 1165         → bin.scan_dev --developer "ПИК"
+                                                (block_id PIK адаптер берёт
+                                                 из таблицы blocks)
+  python -m bin.scan --workers N             → передаётся как --workers N
+
+После 2026-05-25 (R1+R2 рефактора) PIK-парсинг живёт в pik/sources/pik.py
+и driven from bin/scan_dev. Этот файл нужен только для не-сломать
+существующий pik-scan.service до его обновления через install.sh.
 """
 from __future__ import annotations
 
 import argparse
 import logging
 import os
-import sqlite3
 import sys
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import NamedTuple
 
-from pik.blocks_meta import upsert_block_meta
-from pik.client import PikApiError, PikClient
-from pik.developers import ID_NAMESPACE
-from pik.geo import extract_block_meta
-from pik.mapping import to_flat_row, to_snapshot_row
-from pik.store import apply_schema, record_scan_run, refresh_materialized, upsert
-
-MSK = timezone(timedelta(hours=3))
-DEFAULT_BLOCK_ID = int(os.environ.get("PIK_BLOCK_ID", 1165))  # Нарвин
+from bin import scan_dev
 
 
-def _setup_logging() -> None:
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S%z",
     )
-
-
-class BlockData(NamedTuple):
-    """Распарсенный результат фетча одного ЖК — готов к записи в БД."""
-    block_id: int
-    item_count: int
-    flats: list[dict]
-    snaps: list[dict]
-    block_name: str | None
-    block_slug: str | None
-    block_meta: dict
-
-
-def fetch_block(block_id: int, *, scan_date: str, scan_ts: str) -> BlockData:
-    """Скачать и распарсить один ЖК. Безопасно для запуска в отдельном потоке:
-    собственный PikClient/Session, никакого доступа к БД."""
     log = logging.getLogger("pik.scan")
-    client = PikClient()
-    log.info("scanning block_id=%s scan_date=%s", block_id, scan_date)
-    items = client.fetch_block_flats(block_id=block_id, types=(1,))
-
-    flats = [to_flat_row(it, first_seen=scan_date) for it in items]
-    snaps = [to_snapshot_row(it, scan_date=scan_date, scan_ts=scan_ts) for it in items]
-
-    # Имя ЖК + slug + гео-метаданные берём из первого item
-    block_name = None
-    block_slug = None
-    block_meta: dict = {}
-    if items:
-        b = items[0].get("block")
-        if isinstance(b, dict):
-            block_name = b.get("name")
-            block_slug = (b.get("url") or "").strip("/") or None
-        block_meta = extract_block_meta(items[0], slug=block_slug)
-
-    # v2 PIK API убрал bulk.floors из payload, и floors_max везде стал NULL —
-    # делаем нижнюю оценку: MAX(этаж) по всем квартирам ЖК. Если в ЖК есть
-    # квартира на 25-м этаже, дом точно не ниже 25.
-    if not block_meta.get("floors_max") and items:
-        floors = []
-        for it in items:
-            try:
-                floors.append(int(it.get("floor")))
-            except (TypeError, ValueError):
-                pass
-        if floors:
-            block_meta["floors_max"] = max(floors)
-
-    return BlockData(
-        block_id, len(items), flats, snaps, block_name, block_slug, block_meta
+    log.warning(
+        "bin.scan — DEPRECATED. Используйте `python -m bin.scan_dev "
+        "--developer 'ПИК'` напрямую. См. docs/refactor-de-pik-plan.md."
     )
 
-
-def store_block(
-    conn: sqlite3.Connection, data: BlockData, *, scan_date: str, scan_ts: str
-) -> int:
-    """Записать результат фетча в БД. Вызывать только из одного потока."""
-    log = logging.getLogger("pik.scan")
-    upsert(conn, flats=data.flats, snapshots=data.snaps)
-    if data.block_name:
-        upsert_block_meta(
-            conn, block_id=data.block_id, name=data.block_name,
-            slug=data.block_slug, meta=data.block_meta, scan_ts=scan_ts,
-        )
-    one_room = conn.execute(
-        "SELECT COUNT(*) FROM flats f JOIN snapshots s ON s.flat_id=f.id "
-        "WHERE s.scan_date=? AND f.rooms='1' AND f.block_id=?",
-        (scan_date, data.block_id),
-    ).fetchone()[0]
-    log.info("stored %d flats for block %d (%s); 1-room: %d",
-             data.item_count, data.block_id, data.block_name or "?", one_room)
-    return one_room
-
-
-def run_sweep(db_path: Path, block_ids: list[int], *, workers: int) -> int:
-    """Параллельный обход block_ids: фетч в пуле потоков, запись — в этом
-    потоке. Возвращает число упавших ЖК."""
-    log = logging.getLogger("pik.scan")
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    # Единая дата/время на весь обход: иначе ЖК, отсканированные до и после
-    # полуночи, получат разный scan_date и попадут в разные срезы.
-    now = datetime.now(MSK)
-    scan_date = now.strftime("%Y-%m-%d")
-    scan_ts = now.isoformat(timespec="seconds")
-    n_workers = max(1, min(workers, len(block_ids)))
-
-    conn = sqlite3.connect(db_path)
-    failed = 0
-    err_msg: str | None = None
-    started = time.monotonic()
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        apply_schema(conn)
-        with ThreadPoolExecutor(max_workers=n_workers) as ex:
-            futures = {
-                ex.submit(fetch_block, bid, scan_date=scan_date, scan_ts=scan_ts): bid
-                for bid in block_ids
-            }
-            for fut in as_completed(futures):
-                bid = futures[fut]
-                try:
-                    data = fut.result()
-                    store_block(conn, data, scan_date=scan_date, scan_ts=scan_ts)
-                except PikApiError as exc:
-                    log.error("PIK API error for block %d: %s", bid, exc)
-                    failed += 1
-                except Exception:
-                    log.exception("unexpected failure for block %d", bid)
-                    failed += 1
-        # Перевели today_all/today_one_room/flat_sparkline_30d из VIEW в TABLE
-        # на свежих данных скана. Atomic-swap внутри одной транзакции —
-        # readers Datasette видят либо вчерашний срез, либо сегодняшний.
-        refresh_materialized(conn)
-    except Exception as exc:
-        err_msg = f"{type(exc).__name__}: {exc}"[:500]
-        raise
-    finally:
-        # scan_runs пишется ВСЕГДА: успех, частичный сбой, фатальное
-        # исключение в apply_schema/refresh_materialized. Без finally
-        # ловится только happy-path, и алерт по stale-data ослеп в момент,
-        # когда он нужен больше всего. Зеркало scan_dev.py-паттерна.
-        try:
-            elapsed = time.monotonic() - started
-            # COUNT только по PIK-блокам (id < ID_NAMESPACE), иначе если
-            # pik-scan-dev уже отписался сегодня (re-run сценарий),
-            # n_flats_total включал бы 26k чужих квартир и портил
-            # «scanned X flats today» метрику.
-            n_flats_total = conn.execute(
-                "SELECT COUNT(*) FROM snapshots s "
-                "JOIN flats f ON f.id = s.flat_id "
-                "WHERE s.scan_date=? AND f.block_id < ?",
-                (scan_date, ID_NAMESPACE),
-            ).fetchone()[0]
-            if err_msg is not None:
-                run_status = "error"
-                final_err = err_msg
-            elif failed == 0:
-                run_status = "ok"
-                final_err = None
-            elif failed * 2 <= len(block_ids):
-                run_status = "partial"
-                final_err = f"{failed} of {len(block_ids)} blocks failed"
-            else:
-                run_status = "error"
-                final_err = f"{failed} of {len(block_ids)} blocks failed"
-            record_scan_run(
-                conn, developer="ПИК",
-                scan_date=scan_date, scan_ts=scan_ts,
-                n_blocks=len(block_ids) - failed,
-                n_flats=n_flats_total,
-                duration_s=round(elapsed, 1), status=run_status,
-                error_msg=final_err,
-            )
-        except Exception:
-            log.exception("scan: не удалось записать scan_runs")
-        conn.close()
-
-    elapsed = time.monotonic() - started
-    log.info("sweep done: %d block(s), %d worker(s), %d failed, in %.0f s (%.1f min)",
-             len(block_ids), n_workers, failed, elapsed, elapsed / 60)
-    return failed
-
-
-def _parse_block_ids(raw: str) -> list[int]:
-    return [int(x.strip()) for x in raw.split(",") if x.strip()]
-
-
-def _block_ids_from_db(db_path: Path) -> list[int]:
-    """ID всех ЖК ПИК из базы.
-
-    БД теперь общая: не-ПИК застройщики живут в тех же таблицах, но в своих
-    диапазонах id (offset*ID_NAMESPACE, offset>=1). ПИК имеет offset 0, его
-    block_id всегда < ID_NAMESPACE. Фильтр обязателен — иначе --all-blocks
-    скормил бы чужие id (напр. 4_000_000_001_234) в api.pik.ru.
-    """
-    if not db_path.exists():
-        return []
-    with sqlite3.connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT id FROM blocks WHERE id < ? ORDER BY id", (ID_NAMESPACE,)
-        ).fetchall()
-    return [r[0] for r in rows]
-
-
-def main(argv: list[str] | None = None) -> int:
-    _setup_logging()
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--db", default="data/pik.db", type=Path)
     parser.add_argument(
-        "--db",
-        default="data/pik.db",
-        type=Path,
-        help="Path to SQLite DB (default: data/pik.db)",
+        "--block-id", default=os.environ.get("PIK_BLOCK_ID", "1165"),
+        help="Не используется в shim-режиме — список блоков PIK адаптер "
+             "берёт из таблицы blocks. Параметр оставлен для совместимости.",
     )
-    parser.add_argument(
-        "--block-id",
-        default=str(DEFAULT_BLOCK_ID),
-        help=(
-            "PIK block id, comma-separated for multiple "
-            "(default: $PIK_BLOCK_ID or 1165 for Narvin)"
-        ),
-    )
-    parser.add_argument(
-        "--all-blocks",
-        action="store_true",
-        help="Scan every block already known to the DB (ignores --block-id)",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=6,
-        help="Parallel fetch workers (default: 6)",
-    )
+    parser.add_argument("--all-blocks", action="store_true",
+                        help="Игнорируется: PIK всегда сканирует все известные блоки.")
+    parser.add_argument("--workers", type=int, default=6)
     args = parser.parse_args(argv)
-    if args.all_blocks:
-        block_ids = _block_ids_from_db(args.db)
-        if not block_ids:
-            parser.error("--all-blocks: no blocks in DB yet, scan one first")
-    else:
-        block_ids = _parse_block_ids(args.block_id)
-        if not block_ids:
-            parser.error("--block-id must contain at least one id")
-    failed = run_sweep(args.db, block_ids, workers=args.workers)
-    # Ненулевой код (→ systemd пометит юнит failed) только если упало
-    # большинство ЖК — один-два флапнувших из ~69 не повод бить тревогу.
-    return 1 if failed * 2 > len(block_ids) else 0
+
+    return scan_dev.main([
+        "--db", str(args.db),
+        "--developer", "ПИК",
+        "--workers", str(args.workers),
+    ])
 
 
 if __name__ == "__main__":

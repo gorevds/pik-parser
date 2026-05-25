@@ -37,34 +37,30 @@ sudo -u "$SVC_USER" python3.12 -m venv "$APP_DIR/venv"
 sudo -u "$SVC_USER" "$APP_DIR/venv/bin/pip" install --upgrade pip
 sudo -u "$SVC_USER" "$APP_DIR/venv/bin/pip" install -e "$APP_DIR[serve]"
 
-# 4. systemd
+# 4. systemd unit'ы. После R5 (2026-05-25) единый сканер — pik-scan.service,
+# который сразу делает --all (10 застройщиков). pik-scan-dev.{service,timer}
+# полностью убраны с системы: сначала останавливаем и сносим, потом ставим
+# актуальный набор.
+for old in pik-scan-dev.timer pik-scan-dev.service; do
+  if [ -e /etc/systemd/system/$old ]; then
+    systemctl disable --now $old 2>/dev/null || true
+    rm -f /etc/systemd/system/$old
+    echo ">>> убран legacy unit $old"
+  fi
+done
+
 install -m 644 "$APP_DIR/deploy/pik.service"          /etc/systemd/system/pik.service
 install -m 644 "$APP_DIR/deploy/pik-scan.service"     /etc/systemd/system/pik-scan.service
 install -m 644 "$APP_DIR/deploy/pik-scan.timer"       /etc/systemd/system/pik-scan.timer
-install -m 644 "$APP_DIR/deploy/pik-scan-dev.service" /etc/systemd/system/pik-scan-dev.service
-install -m 644 "$APP_DIR/deploy/pik-scan-dev.timer"   /etc/systemd/system/pik-scan-dev.timer
 install -m 644 "$APP_DIR/deploy/pik-backup.service"   /etc/systemd/system/pik-backup.service
 install -m 644 "$APP_DIR/deploy/pik-backup.timer"     /etc/systemd/system/pik-backup.timer
 systemctl daemon-reload
 
-# pik-scan-dev переехал с собственного 06:30-таймера на OnSuccess/OnFailure-
-# триггер из pik-scan.service (см. unit-файл). Это гарантирует сериализацию
-# writer'ов независимо от длительности скана. На существующих машинах
-# старый таймер нужно выключить, иначе он отстреливает второй раз в 06:30.
-if systemctl is-enabled --quiet pik-scan-dev.timer 2>/dev/null; then
-  systemctl disable --now pik-scan-dev.timer
-  echo ">>> pik-scan-dev.timer отключён (теперь чейнится из pik-scan.service)"
-fi
-
-# 5. Первый прогон сканов (обновляет схему + наполняет БД).
-# pik-scan-dev стартует автоматически через OnSuccess/OnFailure из
-# pik-scan.service — повторно запускать его руками не нужно (это удваивало
-# квоту обращений к API внешних застройщиков на каждом install).
+# 5. Первый прогон скана. pik-scan.service теперь обходит все 10 застройщиков
+# одной командой (см. ExecStart=bin.scan_dev --all). pik-scan-dev.service
+# больше не существует — не запрашиваем.
 systemctl start pik-scan.service
-journalctl -u pik-scan.service --no-pager | tail -20
-# Wait for OnSuccess chain
-sleep 2
-journalctl -u pik-scan-dev.service --no-pager | tail -20
+journalctl -u pik-scan.service --no-pager | tail -30
 
 # Перезапуск Datasette после изменения схемы (он держит соединение с pik.db)
 systemctl restart pik.service 2>/dev/null || true
@@ -73,9 +69,6 @@ systemctl restart pik.service 2>/dev/null || true
 systemctl enable --now pik.service
 systemctl enable --now pik-scan.timer
 systemctl enable --now pik-backup.timer
-# pik-scan-dev.timer НЕ enable'им: pik-scan-dev запускается из pik-scan
-# через OnSuccess=. Файл таймера оставлен в системе для возможности
-# ручного `systemctl start pik-scan-dev.service`.
 systemctl status pik.service --no-pager | head -10
 
 # 7. Nginx — двухшаговая раскатка для первичного выпуска TLS-сертификата
