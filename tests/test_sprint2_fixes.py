@@ -234,13 +234,59 @@ def test_pik_collect_aggregates_blocks_in_parallel(monkeypatch):
     """Параллельный фетч через ThreadPool: _fetch_one замокан, всё свернётся
     в собранный CollectResult."""
     item = json.loads((FIXTURES / "sample_flat.json").read_text("utf-8"))
-    # _fetch_one(bid, types) → (bid, items)
+    # _fetch_one(bid, types) → items (block_id хранится в futures-dict caller'а)
     monkeypatch.setattr(
         pik_source, "_fetch_one",
-        lambda bid, types: (bid, [dict(item, block_id=bid, id=item["id"] + bid)]),
+        lambda bid, types: [dict(item, block_id=bid, id=item["id"] + bid)],
     )
     result = pik_source.collect(block_ids=[1165, 1166, 1167], workers=2)
     assert len(result.blocks) == 3
     assert len(result.flats) == 3
     block_ids = {b.native_id for b in result.blocks}
     assert block_ids == {1165, 1166, 1167}
+
+
+def test_pik_source_promo_math_for_studio_with_discount():
+    """Регрессия для PROMO-ветки: studio с meter_price < price → discount > 0.
+
+    Базовый regression test использует sample_flat без скидки. Этот синтез
+    проверяет promo-семантику (`promo_price = round(meter_price * area)`,
+    `discount_pct = (price - promo_price) / price * 100`) на сценарии где
+    цифры действительно дают has_promo=1.
+    """
+    base = json.loads((FIXTURES / "sample_flat.json").read_text("utf-8"))
+    # Студия с явной 12% скидкой: price=10M base, meter_price дисконтированный
+    item = dict(base, id=999001, rooms=0, is_studio=1,
+                area=25.0, price=10_000_000, meterPrice=352_000)
+    # promo_price = round(352_000 * 25.0) = 8_800_000
+    # discount_pct = (10_000_000 - 8_800_000) / 10_000_000 * 100 = 12.0
+    legacy = to_snapshot_row(item, scan_date="2026-05-25", scan_ts="t")
+    from pik.sources.base import CollectResult, NormBlock
+    nb = NormBlock(native_id=item["block_id"], name="Test", slug="test")
+    nf = pik_source._norm_flat(item)
+    _bp, _fr, snap_rows = build_rows("ПИК", CollectResult(blocks=[nb], flats=[nf]),
+                                     scan_date="2026-05-25", scan_ts="t")
+    new = snap_rows[0]
+    assert new["promo_price"] == 8_800_000
+    assert legacy["promo_price"] == 8_800_000
+    assert new["has_promo"] == 1
+    assert legacy["has_promo"] == 1
+    assert abs(new["discount_pct"] - 12.0) < 0.1
+    assert abs(legacy["discount_pct"] - 12.0) < 0.1
+
+
+def test_pik_source_promo_math_for_two_room_no_discount():
+    """Регрессия для NO-PROMO ветки на крупной квартире: meter_price * area ≈ price."""
+    base = json.loads((FIXTURES / "sample_flat.json").read_text("utf-8"))
+    item = dict(base, id=999002, rooms=2,
+                area=65.0, price=24_700_000, meterPrice=380_000)
+    # promo_price = round(380_000 * 65) = 24_700_000 (== price) → has_promo=0
+    legacy = to_snapshot_row(item, scan_date="2026-05-25", scan_ts="t")
+    from pik.sources.base import CollectResult, NormBlock
+    nb = NormBlock(native_id=item["block_id"], name="Test", slug="test")
+    nf = pik_source._norm_flat(item)
+    _bp, _fr, snap_rows = build_rows("ПИК", CollectResult(blocks=[nb], flats=[nf]),
+                                     scan_date="2026-05-25", scan_ts="t")
+    new = snap_rows[0]
+    assert new["promo_price"] == legacy["promo_price"]
+    assert new["has_promo"] == 0 == legacy["has_promo"]

@@ -44,7 +44,7 @@ MSK = timezone(timedelta(hours=3))
 
 
 def _pik_collect_for_known_blocks(db_path: Path) -> CollectResult:
-    """PIK-обёртка для уеных в SOURCES dict (signature без аргументов).
+    """PIK-обёртка для учтённых в SOURCES dict (signature без аргументов).
 
     PIK API не отдаёт каталог блоков — список приходит из таблицы `blocks`
     (где developer='ПИК'), куда они попадают через первый ручной скан или
@@ -67,10 +67,28 @@ def _pik_collect_for_known_blocks(db_path: Path) -> CollectResult:
     return pik_source.collect(block_ids=block_ids)
 
 
+def _pik_placeholder() -> CollectResult:
+    """Raise-фейл, который main() заменяет на db-aware closure.
+
+    Раньше тут была `lambda: CollectResult(blocks=[], flats=[])` — silent-failure
+    trap: любой вызов run_developer(..., "ПИК") до main() записывал бы пустой
+    PIK-скан в scan_runs со status='ok' и шёл бы дальше. Сейчас явный raise
+    ловится тестом, импортирующим scan_dev и вызывающим run_developer напрямую.
+    main() заменяет SOURCES["ПИК"] на лямбду с правильным db_path до первого
+    submit в ThreadPoolExecutor.
+    """
+    raise RuntimeError(
+        "SOURCES['ПИК'] не инициализирован — вызовите scan_dev.main() сначала "
+        "или зарегистрируйте свою обёртку через `SOURCES['ПИК'] = "
+        "lambda: pik_source.collect(block_ids=[...])`"
+    )
+
+
 # Реестр источников: имя застройщика → функция обхода (без аргументов).
-# PIK обёрнут closure с db_path — он подставляется в main() через partial-bind.
+# PIK обёрнут closure с db_path — main() рассинкронит placeholder до того,
+# как ThreadPoolExecutor подхватит SOURCES["ПИК"].
 SOURCES: dict[str, Callable[[], CollectResult]] = {
-    pik_source.DEVELOPER: lambda: CollectResult(blocks=[], flats=[]),  # placeholder, заменится в main()
+    pik_source.DEVELOPER: _pik_placeholder,
     fsk.DEVELOPER: fsk.collect,
     donstroy.DEVELOPER: donstroy.collect,
     a101.DEVELOPER: a101.collect,

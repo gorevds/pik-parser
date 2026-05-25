@@ -21,8 +21,6 @@ import logging
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import requests
-
 from pik.client import PikApiError, PikClient
 from pik.geo import extract_block_meta
 from pik.mapping import _best_mortgage, _detect_promo, _finish_label
@@ -129,11 +127,11 @@ def _norm_block(items: list[dict], block_id: int) -> NormBlock | None:
     return NormBlock(native_id=block_id, name=name, slug=slug, meta=meta)
 
 
-def _fetch_one(block_id: int, types: tuple[int, ...]) -> tuple[int, list[dict]]:
+def _fetch_one(block_id: int, types: tuple[int, ...]) -> list[dict]:
     """Скачать все квартиры одного блока в собственной сессии (thread-safe).
-    Возвращает (block_id, items) — block_id чтобы маппить future→исходник."""
+    Возвращает items; block_id хранится в futures-dict (см. caller)."""
     client = PikClient()
-    return block_id, client.fetch_block_flats(block_id=block_id, types=types)
+    return client.fetch_block_flats(block_id=block_id, types=types)
 
 
 def collect(
@@ -141,7 +139,6 @@ def collect(
     block_ids: Iterable[int],
     types: tuple[int, ...] = (1,),
     workers: int = DEFAULT_WORKERS,
-    session: requests.Session | None = None,  # noqa: ARG001 — для совместимости
 ) -> CollectResult:
     """Скачать перечень PIK-блоков и собрать `CollectResult`.
 
@@ -167,7 +164,7 @@ def collect(
         for fut in as_completed(futures):
             bid = futures[fut]
             try:
-                _, items = fut.result()
+                items = fut.result()
             except PikApiError as exc:
                 log.error("PIK block %d: %s", bid, exc)
                 failed.append(bid)
