@@ -16,6 +16,7 @@ from pik.sources.base import (
     NormFlat,
     make_session,
     request_json,
+    safe_next_url,
 )
 
 
@@ -122,8 +123,14 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
             if mf:
                 block_floors[slug] = max(block_floors.get(slug, 0), mf)
             norm_flats.append(_to_norm(fl))
-        url = payload.get("next")
+        nxt = payload.get("next")
+        if not nxt:
+            break
+        # Defense-in-depth: API может отдать произвольный URL в next.
+        # Доверяем только a101.ru и поддоменам — иначе прерываем обход.
+        url = safe_next_url(nxt, "a101.ru")
         if not url:
+            log.warning("А101: подозрительный next %r, прерываю обход", nxt)
             break
     else:
         log.warning("А101: достигнут предел в %d страниц", _MAX_PAGES)

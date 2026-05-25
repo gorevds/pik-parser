@@ -12,6 +12,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import requests
 
@@ -269,6 +270,32 @@ def build_rows(
             log.warning("%s: native id с конфликтом global id: %s",
                         developer, dup_natives)
     return block_payloads, flat_rows, snap_rows
+
+
+def safe_next_url(url: str | None, allowed_host: str) -> str | None:
+    """Возвращает URL, если хост == allowed_host или его поддомен; иначе None.
+
+    Защита от SSRF: API застройщиков отдают `next`-страницу как полный URL.
+    Без валидации хоста ответ {"next": "http://attacker.com/x", ...} увёл бы
+    наш сканер на чужой домен; payload оттуда мы бы интерпретировали как
+    «следующая страница каталога застройщика» и сложили в БД.
+
+    Принудительно нормализуем схему в https — некоторые API отдают next
+    как http://, что роняет nginx gzip (proxy_http_version 1.1) и
+    отдаёт лишние редиректы.
+    """
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except (ValueError, AttributeError):
+        return None
+    host = parsed.hostname or ""
+    if not (host == allowed_host or host.endswith("." + allowed_host)):
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    return parsed._replace(scheme="https").geturl()
 
 
 def make_session(user_agent: str = DEFAULT_UA) -> requests.Session:

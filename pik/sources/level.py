@@ -17,6 +17,7 @@ from pik.sources.base import (
     NormFlat,
     make_session,
     request_json,
+    safe_next_url,
 )
 
 
@@ -150,8 +151,13 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
             if isinstance(fst, int) and fst > 0:
                 block_floors[slug] = max(block_floors.get(slug, 0), fst)
             norm_flats.append(_to_norm(fl))
-        url = payload.get("next")
+        nxt = payload.get("next")
+        if not nxt:
+            break
+        # SSRF guard: only follow level.ru pages, prevent open redirect injection
+        url = safe_next_url(nxt, "level.ru")
         if not url:
+            log.warning("Level: подозрительный next %r, прерываю обход", nxt)
             break
     else:
         log.warning("Level: достигнут предел в %d страниц", _MAX_PAGES)

@@ -13,7 +13,13 @@ ExecStart=/opt/pik/venv/bin/datasette serve /opt/pik/data/pik.db \
   --host 127.0.0.1 --port 5051 \
   --setting truncate_cells_html 0 \
   --setting max_returned_rows 25000 \
-  --setting sql_time_limit_ms 3000
+  --setting sql_time_limit_ms 3000 \
+  --setting default_allow_sql off
+# default_allow_sql off — публичный /api/ запрещает /_sql и custom SQL
+# в URL'ах через ?sql=. До этого arbitrary SQL execution был анонимным
+# (DoS через рекурсивные CTE; чтение любой таблицы). Витрина работает
+# через предопределённые view (today_all, flat_sparkline_30d) и
+# query-string фильтры — им SQL-эндпоинт не нужен.
 Restart=on-failure
 RestartSec=5
 

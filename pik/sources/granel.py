@@ -11,8 +11,6 @@ import logging
 
 import requests
 
-from urllib.parse import urlparse
-
 from pik.geo import CITY_CENTERS, haversine_km
 from pik.sources.base import (
     CollectResult,
@@ -20,6 +18,7 @@ from pik.sources.base import (
     NormFlat,
     make_session,
     request_json,
+    safe_next_url,
 )
 
 
@@ -177,16 +176,12 @@ def collect(*, session: requests.Session | None = None) -> CollectResult:
         nxt = payload.get("next")
         if not nxt:
             break
-        # API отдаёт next как http:// — принудительно https. И проверяем
-        # хост (defence-in-depth): если бэк когда-нибудь вернёт чужой
-        # домен, мы НЕ должны ходить за ним и складывать ответ как
-        # «квартиры Гранели».
-        nxt_https = nxt.replace("http://", "https://", 1)
-        host = urlparse(nxt_https).hostname or ""
-        if not (host == "granelle.ru" or host.endswith(".granelle.ru")):
-            log.warning("Гранель: пропускаю подозрительный next-host %r", host)
+        # SSRF guard через общий helper. Если хост чужой — прерываем обход
+        # (не складываем чужой payload как «квартиры Гранели»).
+        url = safe_next_url(nxt, "granelle.ru")
+        if not url:
+            log.warning("Гранель: подозрительный next %r, прерываю обход", nxt)
             break
-        url = nxt_https
     else:
         log.warning("Гранель: достигнут предел в %d страниц", _MAX_PAGES)
 

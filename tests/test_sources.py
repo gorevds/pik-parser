@@ -13,6 +13,7 @@ from pik.sources.base import (
     NormFlat,
     _detect_discount,
     build_rows,
+    safe_next_url,
     to_global_id,
 )
 from pik.store import apply_schema
@@ -899,8 +900,10 @@ def test_brusnika_collect_region_prefixes_slug(monkeypatch):
     result = brusnika._collect_region(brusnika.make_session(), "moskva", "msk")
     assert len(result.flats) == 1
     assert len(result.blocks) == 1
-    # native_block_id префиксирован регионом
+    # И native_block_id, И native_id префиксированы регионом — иначе
+    # числовые id из двух регионов столкнулись бы в to_global_id.
     assert result.flats[0].native_block_id == "moskva:79"
+    assert result.flats[0].native_id == "moskva:1"
     assert result.blocks[0].slug == "moskva:79"
     assert result.blocks[0].meta["city"] == "msk"
     assert result.blocks[0].meta["latitude"] == 55.81
