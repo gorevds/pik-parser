@@ -13,13 +13,21 @@ ExecStart=/opt/pik/venv/bin/datasette serve /opt/pik/data/pik.db \
   --host 127.0.0.1 --port 5051 \
   --setting truncate_cells_html 0 \
   --setting max_returned_rows 25000 \
-  --setting sql_time_limit_ms 3000 \
+  --setting sql_time_limit_ms 10000 \
   --setting default_allow_sql off
 # default_allow_sql off — публичный /api/ запрещает /_sql и custom SQL
 # в URL'ах через ?sql=. До этого arbitrary SQL execution был анонимным
 # (DoS через рекурсивные CTE; чтение любой таблицы). Витрина работает
 # через предопределённые view (today_all, flat_sparkline_30d) и
 # query-string фильтры — им SQL-эндпоинт не нужен.
+#
+# sql_time_limit_ms 10000 (было 3000): после добавления Брусники/Гранели/
+# Инграда БД выросла до 41k квартир, и today_all view стал давать 3+с
+# через Datasette (sqlite CLI ту же выборку отдаёт за 0.3с — оверхед
+# Datasette на конвертацию русских колонок в JSON). Правильный фикс —
+# материализовать today_all в таблицу (Sprint 2 / S2.3), сейчас просто
+# повышаем лимит. DoS risk минимален: default_allow_sql off, custom SQL
+# через URL невозможен; единственные тяжёлые запросы — наши view'и.
 Restart=on-failure
 RestartSec=5
 
