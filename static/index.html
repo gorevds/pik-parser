@@ -593,11 +593,11 @@ const fmtPromoBadge = (cell) => {
   return cell.getValue() === 1 ? `<span class="promo-badge">скидка</span>` : "";
 };
 const fmtLink = (cell) => {
-  const v = cell.getValue();
-  if (!v) return "";
+  const href = safeUrl(cell.getValue());   // только http(s); js:/data: → ""
+  if (!href) return "";
   let host = "сайт";
-  try { host = new URL(v).hostname.replace(/^www\./, ""); } catch (_) {}
-  return `<a href="${v}" target="_blank" rel="noopener">${host} ↗</a>`;
+  try { host = new URL(href).hostname.replace(/^www\./, ""); } catch (_) {}
+  return `<a href="${escapeAttr(href)}" target="_blank" rel="noopener">${escapeHtml(host)} ↗</a>`;
 };
 
 // «Заселение» приходит в РАЗНЫХ форматах от разных API:
@@ -667,8 +667,8 @@ const DEV_COLORS = {
 const fmtDeveloper = (cell) => {
   const v = cell.getValue();
   if (!v) return "";
-  const color = DEV_COLORS[v] || "#6b7280";
-  return `<span style="background:${color};color:white;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600">${v}</span>`;
+  const color = DEV_COLORS[v] || "#6b7280";   // color из фиксированной карты, не из данных
+  return `<span style="background:${color};color:white;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600">${escapeHtml(v)}</span>`;
 };
 
 const rowFormatter = (row) => {
@@ -704,8 +704,8 @@ const columns = [
      const name = c.getValue();
      if (!name) return "";
      const type = r["тип_транспорта"];
-     const typeMark = type && type !== "M" ? `<span class="metro-type">${type}</span>` : '';
-     return `${typeMark}${name}`;
+     const typeMark = type && type !== "M" ? `<span class="metro-type">${escapeHtml(type)}</span>` : '';
+     return `${typeMark}${escapeHtml(name)}`;
    }},
   {title: "До метро", field: "мин_пешком", width: 95, hozAlign: "right", headerHozAlign: "right",
    sorter: "number",
@@ -780,14 +780,14 @@ const columns = [
   {title: "График", field: "id", hozAlign: "center", headerHozAlign: "center",
    width: 95, headerSort: false,
    formatter: (c) => {
-     const id = c.getValue();
-     return id ? `<a href="/flat.html?id=${id}" target="_blank" rel="noopener">📈</a>` : "";
+     const id = Number(c.getValue());   // id числовой — Number() режет любую инъекцию в query
+     return Number.isFinite(id) ? `<a href="/flat.html?id=${id}" target="_blank" rel="noopener">📈</a>` : "";
    }},
   {title: "План", field: "планировка", width: 80, hozAlign: "center", headerHozAlign: "center",
    headerSort: false,
    formatter: (c) => {
-     const v = c.getValue();
-     return v ? `<a href="${v}" target="_blank" rel="noopener" title="${v}">📐</a>` : "";
+     const v = safeUrl(c.getValue());   // план приходит из API застройщика — гейтим схему
+     return v ? `<a href="${escapeAttr(v)}" target="_blank" rel="noopener" title="${escapeAttr(v)}">📐</a>` : "";
    }},
   {title: "Сайт", field: "ссылка", width: 110, hozAlign: "center", headerHozAlign: "center",
    formatter: fmtLink, headerSort: false},
