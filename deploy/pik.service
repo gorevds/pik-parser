@@ -34,10 +34,13 @@ RestartSec=5
 # Resource limits + sandboxing — Datasette не должен утащить весь хост,
 # если кто-то найдёт способ заставить его сожрать память запросом
 # (default_allow_sql=off уже отрезает основной вектор, но defence in depth).
-# Memory предел 256МБ: prod peak observed 35МБ, x7 headroom покрывает
-# любой mmap-всплеск; больше — это всё равно бага и Restart=on-failure
-# успеет.
-MemoryMax=256M
+# Memory предел 512МБ: лендинг тянет ВЕСЬ today_all одним запросом
+# (_size=80000; сейчас ~27k строк × ~30 колонок). Datasette в _shape=array
+# материализует list[dict] + сериализует в JSON-строку + gzip одновременно
+# — пик ~200-300МБ. На 256М это OOM-killило сервис посреди ответа (200 →
+# оборванный transfer → nginx 502). 512М даёт запас; бокс 8ГБ, сосед не
+# страдает. Restart=on-failure ловит реальный runaway.
+MemoryMax=512M
 CPUQuota=150%
 PrivateTmp=yes
 ProtectSystem=strict
