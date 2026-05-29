@@ -293,6 +293,13 @@ def build_rows(
             elif price and promo_price < price:
                 disc_pct = round((price - promo_price) / price * 100, 2)
                 has_promo = 1 if disc_pct >= 0.5 else 0
+            # R9: абсолютную скидку считаем от ТОЙ ЖЕ (программной) базы, что
+            # и disc_pct: price → promo_price. Иначе discount хранил бы
+            # old_price−price (стикерную), рассинхронясь с discount_pct.
+            if price is not None and has_promo and promo_price < price:
+                disc_abs = price - promo_price
+            else:
+                disc_abs = 0
         else:
             promo_price = price  # default = «без программы»
         snap_rows.append({
@@ -382,6 +389,14 @@ def request_json(
     **kwargs: Any,
 ) -> Any:
     """HTTP-запрос с ретраями на сетевых сбоях и 5xx/429. Возвращает JSON."""
+    # R15/SSRF: по умолчанию НЕ идём по redirect. safe_next_url валидирует
+    # хост API-данного URL, но 302 с валидного хоста на внутренний адрес
+    # (169.254.169.254, localhost) обошёл бы allowlist. Все наши catalog-URL
+    # — стабильные https, редиректов в норме нет; если эндпоинт всё же
+    # редиректит (напр. добавляет trailing slash), это всплывёт громкой
+    # SourceError ниже, а вызывающий при необходимости передаст
+    # allow_redirects=True явно.
+    kwargs.setdefault("allow_redirects", False)
     last_exc: Exception | None = None
     for attempt in range(retries + 1):
         try:
@@ -422,6 +437,7 @@ def request_text(
     добавлен 403: анти-боты (ServicePipe и пр.) отдают его спорадически, и
     повтор с паузой часто проходит.
     """
+    kwargs.setdefault("allow_redirects", False)  # R15/SSRF, см. request_json
     last_exc: Exception | None = None
     for attempt in range(retries + 1):
         try:

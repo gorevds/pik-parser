@@ -321,6 +321,10 @@ def refresh_materialized(conn: sqlite3.Connection) -> None:
     Идемпотентна: можно вызвать второй раз подряд (первый раз view→table,
     второй — table→table, обновлённая из base flats/snapshots).
     """
+    # R7: см. apply_schema. BEGIN IMMEDIATE сразу берёт write-lock; если
+    # Datasette-читатель держит WAL, успех зависит от busy_timeout вызывающего.
+    # Ставим явно тут, чтобы материализатор был устойчив из любой точки входа.
+    conn.execute("PRAGMA busy_timeout=30000")
     cutoff = (datetime.now(_MSK) - timedelta(days=30)).strftime("%Y-%m-%d")
     sources = [
         # ВАЖЕН ПОРЯДОК: today_one_room SELECT'ит из today_all,
@@ -360,6 +364,11 @@ def refresh_materialized(conn: sqlite3.Connection) -> None:
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
+    # R7: busy_timeout ставим тут, а не полагаемся на вызывающего. apply_schema
+    # делает DDL + UPDATE + CREATE VIEW; под конкурентным Datasette-читателем,
+    # держащим WAL, дефолтные 5с могут дать "database is locked". Так функция
+    # устойчива из любой точки входа (scan_dev, тесты, будущий тулинг).
+    conn.execute("PRAGMA busy_timeout=30000")
     # WAL: писатель (скан) и читатели (Datasette) не блокируют друг друга.
     # Режим персистентен в файле БД. Для :memory: PRAGMA молча остаётся
     # 'memory' — исключения не будет.
