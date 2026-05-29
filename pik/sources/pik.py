@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pik.client import PikApiError, PikClient
 from pik.geo import extract_block_meta
 from pik.mapping import _best_mortgage, _detect_promo, _finish_label
-from pik.sources.base import CollectResult, NormBlock, NormFlat
+from pik.sources.base import CollectResult, NormBlock, NormFlat, SourceError
 
 DEVELOPER = "ПИК"
 DEFAULT_WORKERS = 6
@@ -178,4 +178,14 @@ def collect(
     log.info("ПИК: %d блок(ов), %d квартир%s",
              len(blocks), len(flats),
              f", {len(failed)} failed: {failed}" if failed else "")
-    return CollectResult(blocks=blocks, flats=flats)
+    # R1: если все запрошенные блоки упали — это отказ API, а НЕ пустой
+    # успешный скан. Без raise run_developer записал бы status='ok',
+    # n_blocks=0 — байт-в-байт как легитимный «нет блоков ПИК в БД», и
+    # вчерашний снимок молча выдавался бы за сегодняшний (ПИК — дефолтный
+    # источник). Частичный отказ (failed, но что-то собрали) пробрасываем
+    # через skipped — см. R2/CollectResult.
+    if failed and not blocks:
+        raise SourceError(
+            f"ПИК: все {len(failed)} блок(ов) недоступны (API down?): {failed}"
+        )
+    return CollectResult(blocks=blocks, flats=flats, skipped=len(failed))
