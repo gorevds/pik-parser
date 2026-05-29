@@ -428,6 +428,9 @@
 
 <header>
   <h1>Цены на квартиры — топ-застройщики Москвы</h1>
+  <div id="trunc-banner" role="alert" style="display:none;width:100%;order:99;
+       background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:6px;
+       padding:6px 12px;font-size:13px;font-weight:600;margin-top:6px"></div>
   <div class="stats" id="stats">загрузка…</div>
   <div style="margin-left:auto;display:flex;align-items:center">
     <div class="view-toggle" role="tablist" aria-label="Режим отображения">
@@ -563,6 +566,22 @@
 
 <script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
 <script>
+// Datasette режет ответ на max_returned_rows (см. deploy/pik.service). В
+// _shape=array нет флага усечения, поэтому держим лимит и на клиенте, и в
+// юните одинаковым и сами проверяем rows.length >= ROW_LIMIT. Если упрёмся —
+// статистика/фильтры/карта считаются по НЕПОЛНОМУ набору, поэтому показываем
+// видимый баннер, а не только console.warn.
+const ROW_LIMIT = 80000;
+
+function showTruncationBanner(n) {
+  const el = document.getElementById("trunc-banner");
+  if (!el) return;
+  el.textContent = `⚠ Загружены только первые ${n.toLocaleString("ru-RU")} ` +
+    `квартир (лимит сервера). Статистика и фильтры неполны — поднимите ` +
+    `max_returned_rows в deploy/pik.service.`;
+  el.style.display = "block";
+}
+
 const fmtMoney = (cell) => {
   const v = cell.getValue();
   if (v === null || v === undefined || v === "") return "";
@@ -1128,14 +1147,13 @@ function renderInlineSparkline(history) {
 
 async function loadSparklines() {
   try {
-    // _size=25000 — лимит server max_returned_rows. У нас сейчас ~20k
-    // КВАРТИР, потенциал ~30k. Когда подойдём к границе — silent truncate
-    // (Datasette в _shape=array не возвращает флаг). Логируем.
-    const resp = await fetch("/pik/flat_sparkline_30d.json?_shape=array&_size=25000");
+    // Лимит общий с today_all (ROW_LIMIT) и с max_returned_rows в юните.
+    // В _shape=array Datasette не возвращает флаг усечения — проверяем сами.
+    const resp = await fetch(`/pik/flat_sparkline_30d.json?_shape=array&_size=${ROW_LIMIT}`);
     if (!resp.ok) { console.warn("sparklines: HTTP", resp.status); return; }
     const rows = await resp.json();
-    if (rows.length >= 25000) {
-      console.warn("sparklines: достигнут лимит 25000, часть квартир без графика");
+    if (rows.length >= ROW_LIMIT) {
+      console.warn(`sparklines: достигнут лимит ${ROW_LIMIT}, часть квартир без графика`);
     }
     for (const r of rows) {
       // Datasette сейчас отдаёт TEXT-колонку json_group_array как строку.
@@ -1843,10 +1861,11 @@ function renderStats(rows) {
 }
 
 async function load() {
-  const resp = await fetch("/pik/today_all.json?_shape=array&_size=25000");
+  const resp = await fetch(`/pik/today_all.json?_shape=array&_size=${ROW_LIMIT}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const rows = await resp.json();
   allRows = rows;
+  if (rows.length >= ROW_LIMIT) showTruncationBanner(rows.length);
 
   // Populate developer dropdown — порядок «ПИК сначала» (offset 0), затем
   // по убыванию числа квартир, чтобы наиболее заполненные шли вверх
