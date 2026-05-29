@@ -135,8 +135,10 @@ def run_developer(
     started = time.monotonic()
     err_msg = None
     n_blocks = n_flats = 0
+    skipped = 0
     try:
         result = SOURCES[developer]()
+        skipped = getattr(result, "skipped", 0)
         block_payloads, flat_rows, snap_rows = build_rows(
             developer, result, scan_date=scan_date, scan_ts=scan_ts
         )
@@ -144,17 +146,32 @@ def run_developer(
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA busy_timeout=30000")
-            for bp in block_payloads:
-                upsert_block_meta(
-                    conn, block_id=bp["block_id"], name=bp["name"],
-                    slug=bp["slug"], meta=bp["meta"], developer=bp["developer"],
-                    scan_ts=scan_ts,
-                )
-            upsert(conn, flats=flat_rows, snapshots=snap_rows)
+            # R5/R16: блок-мета + flats/snapshots застройщика — ОДНА транзакция.
+            # Раньше каждый upsert_block_meta коммитился отдельно (N+1 fsync под
+            # 6 параллельными писателями), а flats шли вторым коммитом — крах
+            # между ними оставлял блоки-сироты без квартир. Теперь один BEGIN на
+            # застройщика: меньше contention в WAL и атомарность батча.
+            cur = conn.cursor()
+            cur.execute("BEGIN")
+            try:
+                for bp in block_payloads:
+                    upsert_block_meta(
+                        conn, block_id=bp["block_id"], name=bp["name"],
+                        slug=bp["slug"], meta=bp["meta"],
+                        developer=bp["developer"], scan_ts=scan_ts,
+                        commit=False,
+                    )
+                upsert(conn, flats=flat_rows, snapshots=snap_rows,
+                       manage_transaction=False)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         finally:
             conn.close()
         n_blocks, n_flats = len(block_payloads), len(flat_rows)
-        log.info("%s: записано %d ЖК, %d квартир", developer, n_blocks, n_flats)
+        log.info("%s: записано %d ЖК, %d квартир%s", developer, n_blocks,
+                 n_flats, f" ({skipped} пропущено)" if skipped else "")
     except Exception as exc:
         # СОХРАНИМ запись scan_runs со статусом error, дальше пробросим.
         # На уровне run_sweep исключение уже логируется и считается в failed,
@@ -166,17 +183,34 @@ def run_developer(
         duration = round(time.monotonic() - started, 1)
         # Отдельное соединение для лога — main connection может быть в bad state
         # (поэтому-то мы и логируем тут, в finally).
+        # R2: частичная деградация (skipped>0, но сбор не упал) — отдельный
+        # статус 'partial', а не 'ok'. Так алерт по scan_runs отличает
+        # «антибот срезал 60→3 блока» от честного успеха. Деталь кладём в
+        # error_msg (миграции под отдельную колонку не нужно — схема уже
+        # документирует 'partial').
+        status: str
+        msg: str | None
+        if err_msg is not None:
+            status, msg = "error", err_msg
+        elif skipped:
+            status, msg = "partial", f"{skipped} единиц(ы) пропущено при сборе"
+        else:
+            status, msg = "ok", None
+        # R4: try/finally close — даже если record_scan_run упадёт (busy/disk),
+        # соединение закроется и не утечёт его лок. NB: `with sqlite3.connect()`
+        # тут НЕ годится — контекст-менеджер sqlite3 коммитит, но НЕ закрывает.
         try:
             log_conn = sqlite3.connect(db_path)
-            log_conn.execute("PRAGMA busy_timeout=30000")
-            record_scan_run(
-                log_conn, developer=developer,
-                scan_date=scan_date, scan_ts=scan_ts,
-                n_blocks=n_blocks, n_flats=n_flats, duration_s=duration,
-                status=("ok" if err_msg is None else "error"),
-                error_msg=err_msg,
-            )
-            log_conn.close()
+            try:
+                log_conn.execute("PRAGMA busy_timeout=30000")
+                record_scan_run(
+                    log_conn, developer=developer,
+                    scan_date=scan_date, scan_ts=scan_ts,
+                    n_blocks=n_blocks, n_flats=n_flats, duration_s=duration,
+                    status=status, error_msg=msg,
+                )
+            finally:
+                log_conn.close()
         except Exception:
             log.exception("%s: не удалось записать scan_runs", developer)
     return n_blocks, n_flats
@@ -279,6 +313,13 @@ def main(argv: list[str] | None = None) -> int:
     # ServicePipe) — не повод пометить юнит failed: 9 из 10 успешно
     # = вчерашний снимок остаётся, аналитика не страдает. Но 20%+
     # сбоев = действительно что-то не так с сетью/прокси, ловим.
+    #
+    # R3: для одиночного --developer допуск НЕ применяется. Иначе
+    # threshold = 1//5 = 0, а `failed(max 1) > 1` всегда False — ручной
+    # перезапуск `--developer X` возвращал бы 0 даже при сбое, скрывая его
+    # от обёртки/оператора, читающего $?.
+    if len(developers) == 1:
+        return 1 if failed else 0
     threshold = max(1, len(developers) // 5)
     return 1 if failed > threshold else 0
 

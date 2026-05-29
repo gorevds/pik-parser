@@ -457,23 +457,32 @@ def upsert(
     *,
     flats: Iterable[dict],
     snapshots: Iterable[dict],
+    manage_transaction: bool = True,
 ) -> None:
     # Материализуем сразу: API типизирует параметры как Iterable, но раньше
     # код «потреблял» flats дважды — сначала проходом для setdefault, потом
     # в executemany. Если вызывающий передал генератор, второй проход видел
     # пустую последовательность и квартиры тихо пропадали. Сейчас контракт
     # явно требует list — но удержим устойчивость.
+    #
+    # manage_transaction=False: вызывающий уже открыл BEGIN и сам сделает
+    # commit/rollback — нужно, чтобы блок-мета и flats/snapshots застройщика
+    # легли ОДНОЙ транзакцией (см. scan_dev.run_developer, R5/R16). Тогда
+    # эта функция только добавляет executemany в уже открытую транзакцию.
     flat_rows = list(flats)
     snap_rows = list(snapshots)
     for row in flat_rows:
         for k, v in _FLAT_DEFAULTS.items():
             row.setdefault(k, v)
     cur = conn.cursor()
-    cur.execute("BEGIN")
+    if manage_transaction:
+        cur.execute("BEGIN")
     try:
         cur.executemany(_FLATS_INSERT, flat_rows)
         cur.executemany(_SNAP_INSERT, snap_rows)
-        conn.commit()
+        if manage_transaction:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if manage_transaction:
+            conn.rollback()
         raise

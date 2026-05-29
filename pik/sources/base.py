@@ -103,9 +103,17 @@ class NormFlat:
 
 @dataclass
 class CollectResult:
-    """Результат обхода застройщика — готов к build_rows."""
+    """Результат обхода застройщика — готов к build_rows.
+
+    `skipped` — сколько единиц (блоков/проектов) источник не смог достать,
+    но обход продолжился. >0 означает частичную деградацию: данные неполные,
+    хотя сбор формально не упал. run_developer переводит это в
+    status='partial' в scan_runs (см. R2), чтобы алерт отличал
+    «60→3 блока, антибот» от честного успеха.
+    """
     blocks: list[NormBlock] = field(default_factory=list)
     flats: list[NormFlat] = field(default_factory=list)
+    skipped: int = 0
 
 
 def to_global_id(developer: str, native: int | str) -> int:
