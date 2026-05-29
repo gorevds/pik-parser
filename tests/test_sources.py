@@ -161,6 +161,28 @@ def test_build_rows_drops_duplicate_and_idless_flats():
     assert len(flats) == 1
 
 
+def test_build_rows_discount_matches_promo_base_when_promo_set():
+    # R9: PIK-флэт со стикерной old_price И программным promo_price.
+    # discount (abs) и discount_pct обязаны быть про ОДНУ базу. До фикса
+    # discount хранил old_price−price (12М−10М=2М, стикер), а discount_pct —
+    # программную (price→promo_price = 10%). Теперь discount = price−promo.
+    result = CollectResult(
+        blocks=[NormBlock(native_id="z", name="ЖК Z", slug="z")],
+        flats=[NormFlat(
+            native_id=900, native_block_id="z", rooms=1, area=40.0, floor=5,
+            price=10_000_000, meter_price=250_000, old_price=12_000_000,
+            promo_price=9_000_000, discount_pct=10.0,
+        )],
+    )
+    _, _, snaps = build_rows("ПИК", result, scan_date="d", scan_ts="t")
+    s = snaps[0]
+    assert s["discount_pct"] == 10.0
+    assert s["promo_price"] == 9_000_000
+    # абсолютная скидка от той же (программной) базы, не от стикерной
+    assert s["discount"] == 1_000_000
+    assert s["has_promo"] == 1
+
+
 # --- fsk ----------------------------------------------------------------
 
 def test_fsk_finish_label():

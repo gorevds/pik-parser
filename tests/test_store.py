@@ -1,4 +1,4 @@
-from pik.store import apply_schema, upsert
+from pik.store import apply_schema, refresh_materialized, upsert
 
 SAMPLE_FLAT = {
     "id": 100, "guid": "g-100", "block_id": 1165, "bulk_id": 10397,
@@ -31,6 +31,19 @@ def test_apply_schema_creates_tables_and_view(conn):
 def test_apply_schema_is_idempotent(conn):
     apply_schema(conn)
     apply_schema(conn)
+
+
+def test_apply_schema_sets_busy_timeout(conn):
+    # R7: устойчивость к concurrent Datasette-читателю не зависит от вызывающего
+    apply_schema(conn)
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+
+
+def test_refresh_materialized_sets_busy_timeout(conn):
+    apply_schema(conn)
+    conn.execute("PRAGMA busy_timeout=1000")  # сбили — refresh обязан вернуть 30000
+    refresh_materialized(conn)
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
 
 
 def test_upsert_inserts_new_rows(conn):
