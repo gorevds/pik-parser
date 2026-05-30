@@ -872,7 +872,13 @@ function settlementYear(s) {
   return m ? parseInt(m[1], 10) : null;
 }
 const COLS_LS_KEY = "pik:hidden_cols:v1";
-const hiddenCols = new Set(JSON.parse(localStorage.getItem(COLS_LS_KEY) || "[]"));
+// Колонки, скрытые по умолчанию (пока пользователь не настроил ⚙ Колонки):
+// «линия» метро и «секция» редко нужны и только загромождают таблицу.
+// Пользователи с уже сохранённым набором сохраняют свой выбор.
+const DEFAULT_HIDDEN_COLS = ["линия", "секция"];
+const hiddenCols = new Set(
+  JSON.parse(localStorage.getItem(COLS_LS_KEY) || JSON.stringify(DEFAULT_HIDDEN_COLS))
+);
 
 // ─── Сохранённые поиски (localStorage) ───────────────────────
 // Хранит снапшоты состояния фильтров под понятным именем. Сохраняем
