@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     developer  TEXT NOT NULL,         -- 'ПИК' | 'А101' | … | '_all_' для bin/scan
     n_blocks   INTEGER NOT NULL DEFAULT 0,
     n_flats    INTEGER NOT NULL DEFAULT 0,
+    n_rejected INTEGER NOT NULL DEFAULT 0,  -- квартир отброшено data-quality gate
     duration_s REAL,
     status     TEXT NOT NULL,         -- 'ok' | 'error' | 'partial'
     error_msg  TEXT,
