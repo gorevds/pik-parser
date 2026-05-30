@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Цены на квартиры — топ-застройщики Москвы</title>
 <link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_modern.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
 <style>
   :root {
     --bg: #f6f7f9;
@@ -583,6 +584,7 @@
 <footer id="footer"></footer>
 
 <script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // Datasette режет ответ на max_returned_rows (см. deploy/pik.service). В
 // _shape=array нет флага усечения, поэтому держим лимит и на клиенте, и в
@@ -1439,41 +1441,20 @@ function debounce(fn, ms = 200) {
   };
 }
 
-// ─────────────────── КАРТА (Yandex Maps 2.1) ───────────────────
+// ─────────────────── КАРТА (Leaflet + OpenStreetMap) ───────────────────
 // Принципы:
-// — ленивый load API (только когда пользователь впервые жмёт «Карта»);
-// — один маркер на ЖК (не на квартиру) — 130 ЖК помещаются без кластера;
+// — Leaflet грузится сразу (как Tabulator) — без API-ключа, без лимитов;
+//   раньше был Yandex JS API без apikey, который Yandex теперь отклоняет
+//   («apikey … required»), и карта всегда падала в «недоступна»;
+// — один маркер на ЖК (не на квартиру) — 130 ЖК Leaflet тянет без кластера;
 // — цвет маркера по avg ₽/м² (зелёный=дешевле, красный=дороже) в РАМКАХ
 //   текущего фильтра — динамический градиент;
-// — клик по маркеру → balloon с кнопкой «Открыть в таблице» (фильтрует ЖК).
+// — клик по маркеру → popup с кнопкой «Открыть в таблице» (фильтрует ЖК).
 let viewMode = "table";
-let ymapsLoaded = false;
-let ymapsLoadPromise = null;
 let map = null;
+let mapMarkersLayer = null;
 let blocksGeo = null;
 let blocksGeoPromise = null;
-
-function loadYmaps() {
-  if (ymapsLoaded) return Promise.resolve();
-  if (ymapsLoadPromise) return ymapsLoadPromise;
-  // 10-секундный fallback на случай CSP/блокировщика, где script.onerror
-  // не выстреливает (Chrome молча игнорит блок-by-CSP запрос).
-  ymapsLoadPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://api-maps.yandex.ru/2.1/?lang=ru_RU";
-    s.async = true;
-    const timer = setTimeout(() => reject(new Error("таймаут загрузки карты")), 10000);
-    s.onload = () => ymaps.ready(() => {
-      clearTimeout(timer); ymapsLoaded = true; resolve();
-    });
-    s.onerror = () => { clearTimeout(timer); reject(new Error("ошибка загрузки Yandex Maps")); };
-    document.head.appendChild(s);
-  });
-  // При сбое — обнуляем кеш промиса, иначе повторный клик «🗺 Карта»
-  // вернёт тот же rejected-промис, и пользователь застрянет до перезагрузки.
-  ymapsLoadPromise.catch(() => { ymapsLoadPromise = null; });
-  return ymapsLoadPromise;
-}
 
 function loadBlocksGeo() {
   if (blocksGeo) return Promise.resolve();
@@ -1510,30 +1491,39 @@ async function switchView(mode) {
   document.getElementById("grid").style.display = "none";
   document.getElementById("map").style.display = "block";
   viewMode = "map";
+  if (typeof L === "undefined") {
+    document.getElementById("map").innerHTML =
+      `<div class="map-placeholder">Карта не загрузилась: библиотека Leaflet ` +
+      `недоступна.<br>Попробуй обновить страницу или вернись в таблицу.</div>`;
+    return;
+  }
   try {
-    await Promise.all([loadYmaps(), loadBlocksGeo()]);
+    await loadBlocksGeo();
   } catch (e) {
     document.getElementById("map").innerHTML =
-      `<div class="map-placeholder">Карта не загрузилась: ${e.message}.<br>` +
+      `<div class="map-placeholder">Карта не загрузилась: ${escapeHtml(e.message)}.<br>` +
       `Попробуй обновить страницу или вернись в таблицу.</div>`;
     return;
   }
   // Пользователь мог переключиться обратно в таблицу пока шла загрузка
-  // карты — игнорируем результат, чтобы не инициализировать ymaps.Map
-  // в скрытом контейнере (там layout посчитается как 0x0 и сломается).
+  // данных — не инициализируем карту в скрытом контейнере (layout 0x0).
   if (viewMode !== "map") return;
   if (!map) {
-    map = new ymaps.Map("map", {
-      center: [55.752, 37.617], zoom: 10,
-      controls: ["zoomControl", "fullscreenControl"]
-    });
+    map = L.map("map").setView([55.752, 37.617], 10);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: "© OpenStreetMap",
+    }).addTo(map);
+    mapMarkersLayer = L.layerGroup().addTo(map);
   }
+  // контейнер только что стал видимым (display:none→block) — Leaflet снял
+  // размер как 0×0; пересчитываем, иначе серые/смещённые тайлы.
+  map.invalidateSize();
   renderMapMarkers(filteredRows());
 }
 
 function renderMapMarkers(rows) {
-  if (!map || !blocksGeo) return;
-  map.geoObjects.removeAll();
+  if (!map || !mapMarkersLayer || !blocksGeo) return;
+  mapMarkersLayer.clearLayers();
   // группировка квартир по ЖК (block_id) с пропуском неизвестных координат
   const byBlock = new Map();
   for (const r of rows) {
@@ -1559,9 +1549,7 @@ function renderMapMarkers(rows) {
   const ppms = stats.map(s => s.avgPpm);
   const minPpm = arrayMin(ppms), maxPpm = arrayMax(ppms);
   const range = (maxPpm - minPpm) || 1;
-  // экранирование для balloon HTML (имена ЖК могут иметь спецсимволы)
-  const esc = (s) => String(s).replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const latlngs = [];
   for (const s of stats) {
     // range=0 (все одинаковые) → нейтрально-синий, иначе 120°→0° (зелёный→красный)
     const hue = range === 0 ? 210 : Math.round(120 * (1 - (s.avgPpm - minPpm) / range));
@@ -1570,32 +1558,29 @@ function renderMapMarkers(rows) {
     const avgP = Math.round(s.avgPpm).toLocaleString("ru-RU");
     // Number(...) гарантия что id безопасен для интерполяции (XSS-defence)
     const safeId = Number(s.block.id) || 0;
-    const marker = new ymaps.Placemark(
-      [s.block.latitude, s.block.longitude],
-      {
-        hintContent: `${esc(s.block.name)}: ${s.count} кв., от ${minP} М`,
-        balloonContent:
-          `<b>${esc(s.block.name)}</b><br>` +
-          `${s.count} квартир в выборке<br>` +
-          `от <b>${minP} М ₽</b><br>` +
-          `средняя <b>${avgP} ₽/м²</b><br>` +
-          `<button data-action="filter-block" data-block-id="${safeId}" ` +
-          `style="margin-top:6px;padding:4px 10px;background:#2563eb;color:white;` +
-          `border:none;border-radius:4px;cursor:pointer">Открыть в таблице</button>`,
-      },
-      { preset: "islands#circleIcon", iconColor: color }
+    const ll = [s.block.latitude, s.block.longitude];
+    latlngs.push(ll);
+    const marker = L.circleMarker(ll, {
+      radius: 8, color: "#fff", weight: 1.5,
+      fillColor: color, fillOpacity: 0.9,
+    });
+    marker.bindPopup(
+      `<b>${escapeHtml(s.block.name)}</b><br>` +
+      `${s.count} квартир в выборке<br>` +
+      `от <b>${minP} М ₽</b><br>` +
+      `средняя <b>${avgP} ₽/м²</b><br>` +
+      `<button data-action="filter-block" data-block-id="${safeId}" ` +
+      `style="margin-top:6px;padding:4px 10px;background:#2563eb;color:white;` +
+      `border:none;border-radius:4px;cursor:pointer">Открыть в таблице</button>`
     );
-    map.geoObjects.add(marker);
+    marker.bindTooltip(`${escapeHtml(s.block.name)}: ${s.count} кв., от ${minP} М`);
+    mapMarkersLayer.addLayer(marker);
   }
-  // Одна точка → bounds нулевой площади → setBounds уходит в zoom 19. Лучше
-  // явно центрируем на район. Несколько точек — стандартный fit.
-  if (stats.length === 1) {
-    map.setCenter([stats[0].block.latitude, stats[0].block.longitude], 14);
+  // Одна точка → fitBounds уходит в max zoom. Явно центрируем; иначе fit.
+  if (latlngs.length === 1) {
+    map.setView(latlngs[0], 14);
   } else {
-    try {
-      const b = map.geoObjects.getBounds();
-      if (b) map.setBounds(b, { checkZoomRange: true, zoomMargin: 40 });
-    } catch (_) {}
+    map.fitBounds(latlngs, { padding: [40, 40] });
   }
 }
 
