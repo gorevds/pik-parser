@@ -36,6 +36,7 @@ from pik.sources import (
     level,
     mrgroup,
 )
+from pik.quality import DataQualityStats
 from pik.sources import pik as pik_source
 from pik.sources.base import CollectResult, SourceError, build_rows
 from pik.store import apply_schema, record_scan_run, refresh_materialized, upsert
@@ -136,12 +137,15 @@ def run_developer(
     err_msg = None
     n_blocks = n_flats = 0
     skipped = 0
+    n_rejected = 0
     try:
         result = SOURCES[developer]()
         skipped = getattr(result, "skipped", 0)
+        dq = DataQualityStats()
         block_payloads, flat_rows, snap_rows = build_rows(
-            developer, result, scan_date=scan_date, scan_ts=scan_ts
+            developer, result, scan_date=scan_date, scan_ts=scan_ts, stats=dq
         )
+        n_rejected = dq.total_rejected_flats
         conn = sqlite3.connect(db_path)
         try:
             conn.execute("PRAGMA foreign_keys = ON")
@@ -170,8 +174,11 @@ def run_developer(
         finally:
             conn.close()
         n_blocks, n_flats = len(block_payloads), len(flat_rows)
-        log.info("%s: записано %d ЖК, %d квартир%s", developer, n_blocks,
-                 n_flats, f" ({skipped} пропущено)" if skipped else "")
+        log.info(
+            "%s: записано %d ЖК, %d квартир%s%s", developer, n_blocks, n_flats,
+            f" ({skipped} пропущено сбором)" if skipped else "",
+            f" ({n_rejected} отбраковано data-quality)" if n_rejected else "",
+        )
     except Exception as exc:
         # СОХРАНИМ запись scan_runs со статусом error, дальше пробросим.
         # На уровне run_sweep исключение уже логируется и считается в failed,
@@ -206,8 +213,8 @@ def run_developer(
                 record_scan_run(
                     log_conn, developer=developer,
                     scan_date=scan_date, scan_ts=scan_ts,
-                    n_blocks=n_blocks, n_flats=n_flats, duration_s=duration,
-                    status=status, error_msg=msg,
+                    n_blocks=n_blocks, n_flats=n_flats, n_rejected=n_rejected,
+                    duration_s=duration, status=status, error_msg=msg,
                 )
             finally:
                 log_conn.close()

@@ -20,6 +20,7 @@ import requests
 from pik import PikParserError
 from pik.developers import ID_NAMESPACE, namespaced_id, stable_int_id
 from pik.geo import CITY_CENTERS, city_from_address, haversine_km
+from pik.quality import GEO_MAX_KM, DataQualityStats, geo_ok, price_ok
 
 log = logging.getLogger("pik.sources")
 
@@ -170,13 +171,21 @@ def build_rows(
     *,
     scan_date: str,
     scan_ts: str,
+    stats: DataQualityStats | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """NormBlock/NormFlat → (block_payloads, flat_rows, snap_rows).
 
     block_payloads — аргументы для blocks_meta.upsert_block_meta;
     flat_rows / snap_rows — строки для store.upsert.
+
+    Data-quality gate (см. pik.quality): ЖК с координатами дальше GEO_MAX_KM
+    от центра «своего» города и квартиры с невалидной ценой (0/NULL/вне
+    вилки) НЕ попадают в результат — они логически неверны. Счётчики
+    отбраковки пишутся в `stats`, если он передан.
     """
     block_payloads = []
+    geo_bad: set[int] = set()
+    geo_bad_blocks = 0
     for b in result.blocks:
         # копируем — NormBlock frozen, и мы вписываем 'city'. Город из адреса,
         # если есть; без адреса (Donstroy/A101/Level/Absolut/MR Group все
@@ -201,8 +210,21 @@ def build_rows(
                 haversine_km(float(meta["latitude"]), float(meta["longitude"]),
                              c_lat, c_lon), 1
             )
+        block_gid = to_global_id(developer, b.native_id)
+        # гео-санитар: ЖК за GEO_MAX_KM от центра своего города логически
+        # невозможен (перепутанные lat/lng, не тот город). Не пишем ни сам
+        # ЖК, ни его квартиры (их отсеет geo_bad ниже).
+        if not geo_ok(meta.get("distance_km")):
+            geo_bad.add(block_gid)
+            geo_bad_blocks += 1
+            log.warning(
+                "%s: ЖК %r (%s) отброшен — %s км от центра '%s' (порог %s)",
+                developer, b.name, block_gid, meta.get("distance_km"),
+                city, GEO_MAX_KM,
+            )
+            continue
         block_payloads.append({
-            "block_id": to_global_id(developer, b.native_id),
+            "block_id": block_gid,
             "name": b.name,
             "slug": b.slug,
             "meta": meta,
@@ -224,16 +246,25 @@ def build_rows(
     seen_ids: set[int] = set()
     dup_natives: list[int | str] = []
     skipped_noid = skipped_orphan = skipped_dup = 0
+    skipped_geo = skipped_price = 0
     for f in result.flats:
         if f.native_id is None or f.native_block_id is None:
             skipped_noid += 1
             continue
         gid = to_global_id(developer, f.native_id)
         block_gid = to_global_id(developer, f.native_block_id)
+        # квартира гео-невалидного ЖК — отброшена вместе с ним
+        if block_gid in geo_bad:
+            skipped_geo += 1
+            continue
         # квартира без зарегистрированного ЖК осиротеет: в today_all её
         # COALESCE(developer,'ПИК') ошибочно приписал бы к ПИК
         if block_gid not in known_block_ids:
             skipped_orphan += 1
+            continue
+        # цена 0/NULL/вне вилки — логический мусор, не пишем (см. pik.quality)
+        if not price_ok(f.price):
+            skipped_price += 1
             continue
         # коллизия id (теоретически — хеш строковых id) затёрла бы соседа
         if gid in seen_ids:
@@ -321,10 +352,13 @@ def build_rows(
             "updated_at": f.updated_at,
         })
 
-    if skipped_noid or skipped_orphan or skipped_dup:
+    if (skipped_noid or skipped_orphan or skipped_dup
+            or skipped_price or skipped_geo or geo_bad_blocks):
         log.warning(
-            "%s: пропущено квартир — без id: %d, без ЖК: %d, дубль id: %d",
+            "%s: пропущено квартир — без id: %d, без ЖК: %d, дубль id: %d, "
+            "цена: %d, гео: %d (+ ЖК по гео: %d)",
             developer, skipped_noid, skipped_orphan, skipped_dup,
+            skipped_price, skipped_geo, geo_bad_blocks,
         )
         if dup_natives:
             # дубль — либо источник вернул один id дважды (безвредно), либо
@@ -332,6 +366,10 @@ def build_rows(
             # квартиры). native id в логе позволяет различить эти случаи.
             log.warning("%s: native id с конфликтом global id: %s",
                         developer, dup_natives)
+    if stats is not None:
+        stats.rejected_price = skipped_price
+        stats.rejected_geo = skipped_geo
+        stats.geo_bad_blocks = geo_bad_blocks
     return block_payloads, flat_rows, snap_rows
 
 

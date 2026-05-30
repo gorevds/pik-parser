@@ -114,6 +114,18 @@ def _migrate_flats(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_scan_runs(conn: sqlite3.Connection) -> None:
+    """n_rejected добавлена в 2026-05-30 (data-quality gate). Старые scan_runs
+    без неё не должны крашить record_scan_run (он пишет в эту колонку)."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(scan_runs)")}
+    if not existing:
+        return  # таблицы ещё нет — schema.sql создаст её уже с колонкой
+    if "n_rejected" not in existing:
+        conn.execute(
+            "ALTER TABLE scan_runs ADD COLUMN n_rejected INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 def _assign_nearest_metro(conn: sqlite3.Connection) -> None:
     """Для блоков с lat/lng без metro_name назначаем metro ближайшего блока,
     у которого metro_name известен. Идемпотентно (не перезаписываем), ограничено
@@ -375,6 +387,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode=WAL")
     _migrate_snapshots(conn)
     _migrate_blocks(conn)
+    _migrate_scan_runs(conn)
     _migrate_flats(conn)
     sql = files("pik").joinpath("schema.sql").read_text(encoding="utf-8")
     conn.executescript(sql)
@@ -437,7 +450,7 @@ _SNAP_DEFAULTS = {"has_promo": 0}
 def record_scan_run(
     conn: sqlite3.Connection, *,
     developer: str, scan_date: str, scan_ts: str,
-    n_blocks: int = 0, n_flats: int = 0,
+    n_blocks: int = 0, n_flats: int = 0, n_rejected: int = 0,
     duration_s: float | None = None,
     status: str = "ok", error_msg: str | None = None,
 ) -> None:
@@ -449,13 +462,14 @@ def record_scan_run(
     """
     conn.execute(
         "INSERT INTO scan_runs (scan_date, scan_ts, developer, n_blocks, "
-        "n_flats, duration_s, status, error_msg) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "n_flats, n_rejected, duration_s, status, error_msg) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(scan_date, developer) DO UPDATE SET "
         "scan_ts=excluded.scan_ts, n_blocks=excluded.n_blocks, "
-        "n_flats=excluded.n_flats, duration_s=excluded.duration_s, "
+        "n_flats=excluded.n_flats, n_rejected=excluded.n_rejected, "
+        "duration_s=excluded.duration_s, "
         "status=excluded.status, error_msg=excluded.error_msg",
-        (scan_date, scan_ts, developer, n_blocks, n_flats,
+        (scan_date, scan_ts, developer, n_blocks, n_flats, n_rejected,
          duration_s, status, error_msg),
     )
     conn.commit()

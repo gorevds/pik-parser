@@ -50,6 +50,35 @@ def test_pik_collect_partial_failure_reports_skipped(monkeypatch):
     assert len(result.blocks) == 1
 
 
+def test_run_developer_records_n_rejected(tmp_path, monkeypatch):
+    """Невалидная квартира (нулевая цена) не пишется, но считается в n_rejected;
+    статус остаётся ok (отбраковка — штатная гигиена, не деградация)."""
+    db = tmp_path / "p.db"
+    scan_dev._ensure_schema(db)
+
+    def source_with_bad_flat():
+        return CollectResult(
+            blocks=[NormBlock(native_id="z", name="ЖК Z", slug="z")],
+            flats=[
+                NormFlat(native_id="ok", native_block_id="z", rooms=1,
+                         area=40.0, floor=3, price=10_000_000),
+                NormFlat(native_id="bad", native_block_id="z", rooms=1,
+                         area=40.0, floor=3, price=0),  # нулевая цена
+            ],
+        )
+
+    monkeypatch.setattr(scan_dev, "SOURCES", {"ГК ФСК": source_with_bad_flat})
+    scan_dev.run_developer(db, "ГК ФСК", scan_date="2026-05-29", scan_ts="t")
+    conn = sqlite3.connect(db)
+    n_flats, n_rejected, status = conn.execute(
+        "SELECT n_flats, n_rejected, status FROM scan_runs WHERE developer='ГК ФСК'"
+    ).fetchone()
+    conn.close()
+    assert n_flats == 1
+    assert n_rejected == 1
+    assert status == "ok"
+
+
 def test_run_developer_records_partial_status(tmp_path, monkeypatch):
     db = tmp_path / "p.db"
     scan_dev._ensure_schema(db)
