@@ -132,6 +132,24 @@
     min-width: 220px;
   }
   .cols-panel.open { display: block; }
+  /* «Все фильтры» — раскрываем как fixed-панель с позицией из JS
+     (positionMorePanel). Раньше это был absolute .cols-panel с right:0
+     относительно своего .cols-wrap: когда тулбар (flex-wrap) переносил
+     кнопку на свою строку слева, панель min-width:300 уезжала за ЛЕВЫЙ
+     край экрана и параметры было не видно. Fixed + клампинг в JS держит
+     её на экране при любом положении кнопки; сетка делает поля читаемее. */
+  #moreFiltersPanel {
+    position: fixed;
+    right: auto;
+    min-width: 300px;
+    max-width: min(620px, calc(100vw - 24px));
+    white-space: normal;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 6px 18px;
+  }
+  #moreFiltersPanel.open { display: grid; }
+  #moreFiltersPanel label:not(.range-label),
+  #moreFiltersPanel .cols-actions { grid-column: 1 / -1; }
   .cols-panel label {
     display: flex;
     align-items: center;
@@ -2098,12 +2116,26 @@ async function load() {
     }
   });
 
-  // «Все фильтры» popover. Тот же паттерн что и colsPanel.
+  // «Все фильтры» — fixed-панель, позицию считаем из JS под кнопкой и
+  // клампим в экран. Раньше был absolute-popover внутри .cols-wrap: при
+  // flex-wrap тулбара кнопка переносилась влево, а панель min-width:300
+  // уезжала за левый край и параметры было не видно.
   const moreBtn = document.getElementById("moreFiltersBtn");
   const morePanel = document.getElementById("moreFiltersPanel");
+  const positionMorePanel = () => {
+    const r = moreBtn.getBoundingClientRect();
+    morePanel.style.top = (r.bottom + 4) + "px";
+    const w = morePanel.offsetWidth || 320;
+    let left = r.left;
+    const maxLeft = window.innerWidth - w - 12;
+    if (left > maxLeft) left = maxLeft;
+    if (left < 12) left = 12;
+    morePanel.style.left = left + "px";
+  };
   moreBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     morePanel.classList.toggle("open");
+    if (morePanel.classList.contains("open")) positionMorePanel();
   });
   document.addEventListener("click", (e) => {
     // Если клик ВНУТРИ panel'а (например по input) — не закрываем.
@@ -2113,6 +2145,13 @@ async function load() {
       morePanel.classList.remove("open");
     }
   });
+  // держим панель приклеенной к кнопке при ресайзе/скролле, пока открыта
+  window.addEventListener("resize", () => {
+    if (morePanel.classList.contains("open")) positionMorePanel();
+  });
+  window.addEventListener("scroll", () => {
+    if (morePanel.classList.contains("open")) positionMorePanel();
+  }, true);
 
   // Bindings для всех extra-полей с общим debounce.
   const onExtraNumChange = debounce(() => {
