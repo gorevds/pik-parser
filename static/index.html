@@ -736,8 +736,8 @@ const columns = [
                                   "Инград", "Брусника"]}},
   {title: "Город", field: "город", width: 130, headerFilter: "input",
    formatter: (c) => cityLabel(c.getValue())},
-  {title: "ЖК", field: "жк", width: 175, headerFilter: "input"},
-  {title: "Метро", field: "метро", width: 175, headerFilter: "input",
+  {title: "ЖК", field: "жк", width: 140, headerFilter: "input"},
+  {title: "Метро", field: "метро", width: 130, headerFilter: "input",
    formatter: (c) => {
      const r = c.getRow().getData();
      const name = c.getValue();
@@ -753,15 +753,15 @@ const columns = [
    // молчит для отсутствующего метро и для нулевого/null времени.
    formatter: (c) => metroTimeText(c.getRow().getData())},
   {title: "Линия", field: "линия", width: 165, headerFilter: "input"},
-  {title: "Км от центра", field: "км_от_центра", width: 130, hozAlign: "right", headerHozAlign: "right",
+  {title: "Км от центра", field: "км_от_центра", width: 96, hozAlign: "right", headerHozAlign: "right",
    sorter: "number",
    formatter: (c) => c.getValue() != null ? Number(c.getValue()).toFixed(1) + " км" : ""},
-  {title: "Комнат", field: "комнат", width: 100, hozAlign: "center", headerHozAlign: "center",
+  {title: "Комнат", field: "комнат", width: 78, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list",
    headerFilterParams: {valuesLookup: "all", sortValuesList: "asc"}},
-  {title: "Корпус", field: "корпус", width: 130, headerFilter: "input"},
+  {title: "Корпус", field: "корпус", width: 96, headerFilter: "input"},
   {title: "Секция", field: "секция", width: 100, hozAlign: "center", headerHozAlign: "center", headerFilter: "input"},
-  {title: "Этаж", field: "этаж", width: 95, hozAlign: "center", headerHozAlign: "center",
+  {title: "Этаж", field: "этаж", width: 78, hozAlign: "center", headerHozAlign: "center",
    sorter: "number", headerFilter: "input",
    formatter: (c) => {
      const r = c.getRow().getData();
@@ -770,7 +770,7 @@ const columns = [
      if (f == null) return "";
      return total ? `${f} / ${total}` : String(f);
    }},
-  {title: "Площадь, м²", field: "площадь_м²", width: 145, hozAlign: "right", headerHozAlign: "right",
+  {title: "Площадь, м²", field: "площадь_м²", width: 104, hozAlign: "right", headerHozAlign: "right",
    sorter: "number",
    formatter: (c) => c.getValue() != null ? Number(c.getValue()).toFixed(1) : ""},
   {title: "База", field: "базовая_цена", hozAlign: "right", headerHozAlign: "right",
@@ -798,12 +798,12 @@ const columns = [
      return rent == null ? "" :
        `<span style="color:#475569">~${Math.round(rent/1000)}к ₽</span>`;
    }},
-  {title: "Отделка", field: "отделка", width: 195,
+  {title: "Отделка", field: "отделка", width: 140,
    headerFilter: "list", headerFilterParams: {valuesLookup: "all", sortValuesList: "asc"}},
-  {title: "Заселение", field: "заселение", width: 110, hozAlign: "center", headerHozAlign: "center",
+  {title: "Заселение", field: "заселение", width: 92, hozAlign: "center", headerHozAlign: "center",
    sorter: (a, b) => fmtSettleSort(a) - fmtSettleSort(b),
    formatter: (c) => fmtSettle(c.getValue())},
-  {title: "Статус", field: "статус", width: 100, hozAlign: "center", headerHozAlign: "center",
+  {title: "Статус", field: "статус", width: 84, hozAlign: "center", headerHozAlign: "center",
    headerFilter: "list", headerFilterParams: {valuesLookup: "all", sortValuesList: "asc"}},
   {title: "30 дн", field: "id", hozAlign: "center", headerHozAlign: "center",
    width: 100, headerSort: false,
