@@ -871,14 +871,16 @@ function settlementYear(s) {
   const m = String(s).match(/(20\d{2})/);
   return m ? parseInt(m[1], 10) : null;
 }
-const COLS_LS_KEY = "pik:hidden_cols:v1";
-// Колонки, скрытые по умолчанию (пока пользователь не настроил ⚙ Колонки):
-// «линия» метро и «секция» редко нужны и только загромождают таблицу.
-// Пользователи с уже сохранённым набором сохраняют свой выбор.
-const DEFAULT_HIDDEN_COLS = ["линия", "секция"];
-const hiddenCols = new Set(
-  JSON.parse(localStorage.getItem(COLS_LS_KEY) || JSON.stringify(DEFAULT_HIDDEN_COLS))
-);
+const COLS_LS_KEY = "pik:hidden_cols:v2";  // v2: дефолт прячет линию/секцию
+// Колонки, скрытые по умолчанию на первом визите (нет записи в localStorage):
+// «линия» метро и «секция» редко нужны и загромождают таблицу. Пользователь
+// с уже сохранённым набором сохраняет свой выбор. ВАЖНО: ключи скрытия —
+// в формате `${field}__${idx}` (индекс по массиву `columns`, как в
+// buildColsPanel/applyColumnVisibility), а не просто имя поля — иначе
+// hiddenCols.has(key) никогда не совпадёт. линия=idx6, секция=idx10.
+const DEFAULT_HIDDEN_COLS = ["линия__6", "секция__10"];
+const _savedCols = localStorage.getItem(COLS_LS_KEY);
+const hiddenCols = new Set(_savedCols ? JSON.parse(_savedCols) : DEFAULT_HIDDEN_COLS);
 
 // ─── Сохранённые поиски (localStorage) ───────────────────────
 // Хранит снапшоты состояния фильтров под понятным именем. Сохраняем
