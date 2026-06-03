@@ -1539,10 +1539,12 @@ async function switchView(mode) {
   // контейнер только что стал видимым (display:none→block) — Leaflet снял
   // размер как 0×0; пересчитываем, иначе серые/смещённые тайлы.
   map.invalidateSize();
-  renderMapMarkers(filteredRows());
+  // fit=true только при входе в режим карты; при смене фильтров позицию
+  // (pan/zoom) сохраняем — иначе карта «прыгает» на каждый фильтр.
+  renderMapMarkers(filteredRows(), true);
 }
 
-function renderMapMarkers(rows) {
+function renderMapMarkers(rows, fit = false) {
   if (!map || !mapMarkersLayer || !blocksGeo) return;
   mapMarkersLayer.clearLayers();
   // группировка квартир по ЖК (block_id) с пропуском неизвестных координат
@@ -1597,11 +1599,15 @@ function renderMapMarkers(rows) {
     marker.bindTooltip(`${escapeHtml(s.block.name)}: ${s.count} кв., от ${minP} М`);
     mapMarkersLayer.addLayer(marker);
   }
-  // Одна точка → fitBounds уходит в max zoom. Явно центрируем; иначе fit.
-  if (latlngs.length === 1) {
-    map.setView(latlngs[0], 14);
-  } else {
-    map.fitBounds(latlngs, { padding: [40, 40] });
+  // Авто-центрирование только при первом показе карты (fit=true). При смене
+  // фильтров сохраняем текущую позицию пользователя.
+  if (fit) {
+    // Одна точка → fitBounds уходит в max zoom. Явно центрируем; иначе fit.
+    if (latlngs.length === 1) {
+      map.setView(latlngs[0], 14);
+    } else {
+      map.fitBounds(latlngs, { padding: [40, 40] });
+    }
   }
 }
 
