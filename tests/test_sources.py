@@ -93,7 +93,36 @@ def test_build_rows_links_flat_to_block_and_namespaces_ids():
     assert flats[0]["is_studio"] == 0
     assert snaps[0]["discount_pct"] == 16.67
     assert snaps[0]["has_promo"] == 1
-    assert snaps[0]["base_meter_price"] == 200_000
+    # база за м² — от БАЗОВОЙ (списочной) цены old_price=12M, не от price=10M:
+    # round(12_000_000 / 50) = 240_000 (см. также след. тест).
+    assert snaps[0]["base_meter_price"] == 240_000
+
+
+def test_build_rows_base_meter_uses_list_price_not_discounted():
+    """база_за_м² согласована со столбцом базовая_цена (= old_price)."""
+    result = CollectResult(
+        blocks=[NormBlock(native_id="b", name="ЖК", slug="b")],
+        flats=[NormFlat(native_id=1, native_block_id="b", rooms=1, area=65.9,
+                        floor=5, price=39_210_500, old_price=46_130_000)],
+    )
+    _, _, snaps = build_rows("MR Group", result, scan_date="d", scan_ts="t")
+    assert snaps[0]["base_meter_price"] == round(46_130_000 / 65.9)  # 700_000
+
+
+def test_build_rows_zero_ceiling_becomes_null():
+    result = CollectResult(
+        blocks=[NormBlock(native_id="b", name="ЖК", slug="b")],
+        flats=[
+            NormFlat(native_id=1, native_block_id="b", rooms=1, area=40.0,
+                     floor=2, price=8_000_000, ceiling_height=0.0),
+            NormFlat(native_id=2, native_block_id="b", rooms=1, area=40.0,
+                     floor=3, price=8_000_000, ceiling_height=2.65),
+        ],
+    )
+    _, flats, _ = build_rows("ПИК", result, scan_date="d", scan_ts="t")
+    by_guid = {f["guid"]: f for f in flats}
+    assert by_guid["1"]["ceiling_height"] is None
+    assert by_guid["2"]["ceiling_height"] == 2.65
 
 
 def test_build_rows_marks_studio():

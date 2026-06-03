@@ -277,7 +277,12 @@ def build_rows(
         meter_price = f.meter_price
         if meter_price is None and price and area and area > 0:
             meter_price = round(price / area)
-        base_meter = round(price / area) if price and area and area > 0 else None
+        # «база за м²» считаем от БАЗОВОЙ (списочной) цены = COALESCE(old_price,
+        # price). У скидочных квартир (old_price>price) round(price/area) давал
+        # программную (сниженную) ставку, рассинхронясь со столбцом
+        # «базовая_цена» (= old_price) в витрине → база_за_м² ≠ базовая/площадь.
+        base_price = f.old_price if (f.old_price and price and f.old_price > price) else price
+        base_meter = round(base_price / area) if base_price and area and area > 0 else None
         disc_abs, disc_pct, has_promo = _detect_discount(price, f.old_price)
         rooms = f.rooms
 
@@ -305,7 +310,8 @@ def build_rows(
             "url": f.url,
             "pdf_url": f.pdf_url,
             "plan_url": f.plan_url,
-            "ceiling_height": f.ceiling_height,
+            # высота потолка 0/отрицательная — не значение, а заглушка источника
+            "ceiling_height": f.ceiling_height if (f.ceiling_height or 0) > 0 else None,
             "settlement_date": f.settlement_date,
             "first_seen": scan_date,
         })
