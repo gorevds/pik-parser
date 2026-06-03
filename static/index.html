@@ -1931,6 +1931,11 @@ async function load() {
     opt.value = c; opt.textContent = `${cityLabel(c)} (${cityCounts.get(c)})`;
     citySel.appendChild(opt);
   }
+  // По умолчанию показываем Москву (если есть в данных) — основной рынок.
+  if (cityCounts.has("msk")) {
+    currentCity = "msk";
+    citySel.value = "msk";
+  }
   citySel.addEventListener("change", (e) => {
     currentCity = e.target.value;
     currentZk = "all";
@@ -2220,6 +2225,10 @@ async function load() {
     `Источники: 10 застройщиков — ПИК, А101, Донстрой, Абсолют, Level, ` +
     `ГК ФСК, MR Group, Гранель, Инград, Брусника. ` +
     `Скан ежедневно в 06:00 МСК. Последний срез: ${last}.`;
+
+  // Применяем стартовый фильтр (город по умолчанию = Москва): наполняет
+  // таблицу, статистику и список ЖК согласованно.
+  applyFilter();
 }
 load().catch((e) => {
   document.getElementById("grid").innerHTML =
