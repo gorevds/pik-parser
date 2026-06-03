@@ -1019,3 +1019,35 @@ def test_mrgroup_parse_flats_page_on_real_fixture():
 
 def test_mrgroup_parse_flats_page_empty_on_antibot_stub():
     assert mrgroup.parse_flats_page("<html><body>challenge</body></html>", "x") == []
+
+
+from pik.sources import pik as pik_src  # noqa: E402
+
+
+def test_pik_norm_block_floors_max_is_max_over_all_corpus():
+    """floors_max ЖК — максимум по ВСЕМ корпусам, не по первой квартире.
+
+    Регресс: extract_block_meta берёт floors из items[0].bulk; когда первая
+    квартира в низком корпусе (1–5 эт.), floors_max занижался и этаж квартиры
+    мог превышать «этажность» (битые 69/20)."""
+    block = {"name": "Холланд парк", "url": "/holland-park/"}
+    items = [
+        {"block": block, "bulk": {"name": "Корпус 9", "floors": 1}, "floor": 2},
+        {"block": block, "bulk": {"name": "Корпус 9", "floors": 1}, "floor": 24},
+        {"block": block, "bulk": {"name": "Башня", "floors": 30}, "floor": 30},
+    ]
+    nb = pik_src._norm_block(items, block_id=12345)
+    assert nb is not None
+    assert nb.meta["floors_max"] == 30
+
+
+def test_pik_norm_block_floors_max_never_below_flat_floor():
+    """Этаж квартиры не может превышать дом: floors_max ≥ max(floor)."""
+    block = {"name": "Кутузовский квартал", "url": "/kq/"}
+    items = [
+        {"block": block, "bulk": {"name": "Корпус 3", "floors": 5}, "floor": 30},
+        {"block": block, "bulk": {"name": "Корпус 3", "floors": 5}, "floor": 6},
+    ]
+    nb = pik_src._norm_block(items, block_id=222)
+    assert nb is not None
+    assert nb.meta["floors_max"] == 30

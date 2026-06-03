@@ -114,16 +114,22 @@ def _norm_block(items: list[dict], block_id: int) -> NormBlock | None:
     name = b.get("name") or f"ЖК {block_id}"
     slug = (b.get("url") or "").strip("/") or None
     meta = extract_block_meta(items[0], slug=slug)
-    # v2 API убрал bulk.floors из payload, делаем нижнюю оценку через max(floor)
-    if not meta.get("floors_max"):
-        floors = []
-        for it in items:
+    # floors_max на уровне ЖК — максимум по ВСЕМ корпусам и этажам квартир.
+    # extract_block_meta берёт floors только из items[0].bulk: если первая
+    # квартира попала в низкий корпус (1–5 эт.), floors_max занижался и этаж
+    # квартиры мог превышать «этажность здания» (битые 69/20 в UI). Берём max
+    # по всем bulk.floors + нижнюю оценку через max(floor): этаж квартиры не
+    # может быть выше дома, в котором она находится.
+    floors = []
+    for it in items:
+        bulk = it.get("bulk") if isinstance(it.get("bulk"), dict) else {}
+        for v in (bulk.get("floors"), it.get("floor")):
             try:
-                floors.append(int(it.get("floor")))
+                floors.append(int(v))
             except (TypeError, ValueError):
                 pass
-        if floors:
-            meta["floors_max"] = max(floors)
+    if floors:
+        meta["floors_max"] = max(floors)
     return NormBlock(native_id=block_id, name=name, slug=slug, meta=meta)
 
 
