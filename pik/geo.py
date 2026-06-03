@@ -142,6 +142,29 @@ def derive_city(slug: str | None) -> str:
     return "msk"
 
 
+# Если ЖК дальше этого от центра приписанного города — город определён неверно
+# (ложный матч подстроки в адресе). Подмосковье от Кремля ~140 км, край МО
+# ~250 → порог 250 безопасен и недостижим для легитимного объекта.
+CITY_MISMATCH_KM = 250.0
+
+
+def validate_city_by_coords(city: str, lat: float, lon: float) -> str:
+    """Сверить город с координатами; при грубом расхождении — ближайший центр.
+
+    Возвращает исходный city, если он в справочнике и до его центра
+    ≤ CITY_MISMATCH_KM. Иначе — ближайший по координатам известный центр.
+    msk↔mo (общий центр-Кремль) не перебиваем: при совпадении центров
+    оставляем исходный город.
+    """
+    if city in CITY_CENTERS:
+        if haversine_km(lat, lon, *CITY_CENTERS[city]) <= CITY_MISMATCH_KM:
+            return city
+    nearest = min(CITY_CENTERS, key=lambda c: haversine_km(lat, lon, *CITY_CENTERS[c]))
+    if city in CITY_CENTERS and CITY_CENTERS[city] == CITY_CENTERS[nearest]:
+        return city
+    return nearest
+
+
 def extract_block_meta(data: dict, *, slug: str | None = None) -> dict:
     """Из v2/flat-payload (или flat-item) достать координаты, метро, адрес.
 
@@ -193,6 +216,13 @@ def extract_block_meta(data: dict, *, slug: str | None = None) -> dict:
     city = city_from_address(address)
     if city == "msk" and slug and "/" in slug:
         city = derive_city(slug)
+
+    # Координатная валидация города. Подстрочный матч по адресу иногда даёт
+    # ложный город: московская «ул. Амурская» (Гольяново) → blagoveshchensk,
+    # СПб-объект на «Кантемировской» → msk. Если координаты есть, а до центра
+    # «своего» города > CITY_MISMATCH_KM, берём ближайший известный центр.
+    if lat is not None and lon is not None:
+        city = validate_city_by_coords(city, lat, lon)
 
     distance_km = None
     if lat is not None and lon is not None and city in CITY_CENTERS:

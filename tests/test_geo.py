@@ -5,7 +5,29 @@ from pik.geo import (
     extract_block_meta,
     haversine_km,
     primary_metro,
+    validate_city_by_coords,
 )
+
+
+def test_validate_city_keeps_correct_city():
+    # Реальный Благовещенск (координаты центра) с city=blagoveshchensk — ок.
+    lat, lon = CITY_CENTERS["blagoveshchensk"]
+    assert validate_city_by_coords("blagoveshchensk", lat, lon) == "blagoveshchensk"
+
+
+def test_validate_city_overrides_moscow_amurskaya_to_msk():
+    # «ул. Амурская» в Москве → ложный blagoveshchensk; координаты московские.
+    assert validate_city_by_coords("blagoveshchensk", 55.805865, 37.753913) == "msk"
+
+
+def test_validate_city_overrides_spb_mislabeled_msk():
+    # Объект на Кантемировской в СПб, ошибочно помеченный msk.
+    assert validate_city_by_coords("msk", 59.981838, 30.338658) == "spb"
+
+
+def test_validate_city_keeps_mo_within_threshold():
+    # Дальнее Подмосковье (~120 км от Кремля) остаётся mo, не перебивается.
+    assert validate_city_by_coords("mo", 55.7520 - 1.05, 37.6175) == "mo"
 
 
 def test_haversine_kremlin_to_self_is_zero():
