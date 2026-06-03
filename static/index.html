@@ -1904,12 +1904,19 @@ async function load() {
     applyFilter();
   });
 
-  // Populate city dropdown
-  const cities = [...new Set(rows.map(r => r["город"]).filter(Boolean))].sort();
+  // Populate city dropdown — сортируем по числу объектов (по убыванию),
+  // крупнейшие города (Москва, МО) сверху; счётчик показываем в подписи.
+  const cityCounts = new Map();
+  for (const r of rows) {
+    const c = r["город"];
+    if (c) cityCounts.set(c, (cityCounts.get(c) || 0) + 1);
+  }
+  const cities = [...cityCounts.keys()].sort(
+    (a, b) => cityCounts.get(b) - cityCounts.get(a) || cityLabel(a).localeCompare(cityLabel(b)));
   const citySel = document.getElementById("cityFilter");
   for (const c of cities) {
     const opt = document.createElement("option");
-    opt.value = c; opt.textContent = cityLabel(c);
+    opt.value = c; opt.textContent = `${cityLabel(c)} (${cityCounts.get(c)})`;
     citySel.appendChild(opt);
   }
   citySel.addEventListener("change", (e) => {
