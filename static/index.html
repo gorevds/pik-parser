@@ -244,6 +244,12 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
+    /* собственный stacking-контекст: внутренние слои Leaflet (panes до
+       z-index 700, контролы ~1000) иначе перекрывают выпадающие панели
+       «Все фильтры»/«Колонки». z-index:0 держит их ниже тулбара (z-index 50)
+       и панелей (100). */
+    position: relative;
+    z-index: 0;
   }
   .map-placeholder {
     display: flex;
