@@ -35,6 +35,9 @@ from datetime import date, timedelta
 FULL_SCAN_FRACTION = 0.5
 # Сколько полных сканов застройщика после last_seen нужно, чтобы признать «ушёл».
 GONE_PERSIST = 2
+# Для кривой остатка: день учитывается, если глобальный дневной объём ≥ этой доли
+# от пикового — отсекает ранний разреженный период (рост покрытия ≠ продажи).
+DENSE_DAY_FRACTION = 0.5
 # Статусы «забронировано» — лидирующий индикатор продажи (free → reserve → gone).
 RESERVED_STATUSES = ("reserve", "booked", "2")
 
@@ -260,23 +263,26 @@ def build_block_inventory_daily(conn: sqlite3.Connection) -> None:
         f"""
         CREATE TABLE block_inventory_daily AS
         SELECT f.block_id AS block_id,
-               b.developer AS developer,
                s.scan_date AS scan_date,
                COUNT(DISTINCT s.flat_id) AS listed,
                SUM(CASE WHEN s.status IN ({reserved_set}) THEN 1 ELSE 0 END) AS reserved
         FROM snapshots s
         JOIN flats f ON f.id = s.flat_id
-        JOIN blocks b ON b.id = f.block_id
         GROUP BY f.block_id, s.scan_date
         """
     )
-    # Выкидываем частичные дни (не полный скан застройщика): иначе кривая
-    # остатка пилообразная — провалы из-за недосканивания, а не продаж.
-    keep = {(dev, d) for dev, dates in _full_scan_dates(conn).items() for d in dates}
-    rows = conn.execute(
-        "SELECT rowid, developer, scan_date FROM block_inventory_daily"
+    # Оставляем только «плотные» даты: глобальный дневной объём ≥ 50% от пика.
+    # Отсекает ранний разреженный/ПИК-only период, где счёт по ЖК скачет не
+    # из-за продаж, а из-за роста покрытия скрапа → кривая остатка чистая.
+    counts = conn.execute(
+        "SELECT scan_date, COUNT(*) FROM snapshots GROUP BY scan_date"
     ).fetchall()
-    bad = [(rid,) for rid, dev, d in rows if (dev, d) not in keep]
+    mx = max((c for _, c in counts), default=0)
+    dense = {d for d, c in counts if mx and c >= DENSE_DAY_FRACTION * mx}
+    rows = conn.execute(
+        "SELECT rowid, scan_date FROM block_inventory_daily"
+    ).fetchall()
+    bad = [(rid,) for rid, d in rows if d not in dense]
     conn.executemany("DELETE FROM block_inventory_daily WHERE rowid=?", bad)
     conn.execute(
         "CREATE INDEX idx_inv_block ON block_inventory_daily(block_id, scan_date)"
