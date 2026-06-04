@@ -3,6 +3,8 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from importlib.resources import files
 
+from pik.velocity import build_velocity_tables
+
 _MSK = timezone(timedelta(hours=3))
 
 
@@ -373,6 +375,12 @@ def refresh_materialized(conn: sqlite3.Connection) -> None:
     except Exception:
         conn.rollback()
         raise
+    # velocity-витрины (flat_lifecycle / block_velocity / block_inventory_daily)
+    # — после today_all и отдельной транзакцией: block_velocity читает только
+    # что построенный flat_lifecycle. Логика сложнее SQL (детект полного скана,
+    # защита от мерцания) → отдельный модуль, см. pik/velocity.py.
+    build_velocity_tables(conn)
+    conn.commit()
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
