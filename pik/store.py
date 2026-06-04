@@ -376,11 +376,10 @@ def refresh_materialized(conn: sqlite3.Connection) -> None:
         conn.rollback()
         raise
     # velocity-витрины (flat_lifecycle / block_velocity / block_inventory_daily)
-    # — после today_all и отдельной транзакцией: block_velocity читает только
-    # что построенный flat_lifecycle. Логика сложнее SQL (детект полного скана,
-    # защита от мерцания) → отдельный модуль, см. pik/velocity.py.
+    # — после today_all. Сама управляет своей транзакцией (BEGIN IMMEDIATE +
+    # commit/rollback, atomic swap для Datasette-читателя). Логика сложнее SQL
+    # (детект полного скана, защита от мерцания) → отдельный модуль velocity.py.
     build_velocity_tables(conn)
-    conn.commit()
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:

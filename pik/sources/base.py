@@ -278,10 +278,11 @@ def build_rows(
         if meter_price is None and price and area and area > 0:
             meter_price = round(price / area)
         # «база за м²» считаем от БАЗОВОЙ (списочной) цены = COALESCE(old_price,
-        # price). У скидочных квартир (old_price>price) round(price/area) давал
-        # программную (сниженную) ставку, рассинхронясь со столбцом
-        # «базовая_цена» (= old_price) в витрине → база_за_м² ≠ базовая/площадь.
-        base_price = f.old_price if (f.old_price and price and f.old_price > price) else price
+        # price) — ТОЧНО как столбец «базовая_цена» в витрине (store.py), иначе
+        # база_за_м² ≠ базовая_цена/площадь. Зеркалим COALESCE целиком (а не
+        # только old_price>price), чтобы инвариант держался и в редком случае
+        # old_price ≤ price (цена выросла выше прежней списочной).
+        base_price = f.old_price if f.old_price else price
         base_meter = round(base_price / area) if base_price and area and area > 0 else None
         disc_abs, disc_pct, has_promo = _detect_discount(price, f.old_price)
         rooms = f.rooms

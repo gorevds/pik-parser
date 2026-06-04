@@ -30,6 +30,13 @@ def test_validate_city_keeps_mo_within_threshold():
     assert validate_city_by_coords("mo", 55.7520 - 1.05, 37.6175) == "mo"
 
 
+def test_validate_city_keeps_other_when_no_centre_near():
+    # Реальный 'other'-регион (Элиста, Калмыкия) — ни один известный центр не
+    # ближе порога → НЕ переназначаем (иначе distance_km взлетит и гео-гейт
+    # выбросит весь блок). Ближайший центр (Краснодар) ~430 км.
+    assert validate_city_by_coords("other", 46.3079, 44.2558) == "other"
+
+
 def test_haversine_kremlin_to_self_is_zero():
     lat, lon = CITY_CENTERS["msk"]
     assert haversine_km(lat, lon, lat, lon) == 0

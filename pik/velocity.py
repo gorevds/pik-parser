@@ -38,6 +38,9 @@ GONE_PERSIST = 2
 # Для кривой остатка: день учитывается, если глобальный дневной объём ≥ этой доли
 # от пикового — отсекает ранний разреженный период (рост покрытия ≠ продажи).
 DENSE_DAY_FRACTION = 0.5
+# Кривую остатка держим только за последние N плотных дат: свежесть + защита от
+# безграничного роста block_inventory_daily (snapshots не прунятся).
+INVENTORY_MAX_DATES = 180
 # Статусы «забронировано» — лидирующий индикатор продажи (free → reserve → gone).
 RESERVED_STATUSES = ("reserve", "booked", "2")
 
@@ -78,13 +81,17 @@ def _full_scan_dates(conn: sqlite3.Connection) -> dict[str, list[str]]:
     return full
 
 
-def build_flat_lifecycle(conn: sqlite3.Connection) -> None:
+def build_flat_lifecycle(conn: sqlite3.Connection, full=None) -> None:
     """Строит таблицу flat_lifecycle: по строке на квартиру.
 
     Поля: first_seen_date / last_seen_date / ever_reserved / gone / gone_date /
     still_listed / dom_days (дни в продаже, для ушедших).
+
+    `full` (developer→даты полных сканов) можно передать, чтобы не сканировать
+    snapshots повторно (build_velocity_tables считает его один раз).
     """
-    full = _full_scan_dates(conn)
+    if full is None:
+        full = _full_scan_dates(conn)
     reserved_set = ",".join(f"'{s}'" for s in RESERVED_STATUSES)
     rows = conn.execute(
         f"""
@@ -153,7 +160,9 @@ def _coverage_30d(full: dict[str, list[str]], today: str) -> dict[str, int]:
     return cov
 
 
-def build_block_velocity(conn: sqlite3.Connection, today: str | None = None) -> None:
+def build_block_velocity(
+    conn: sqlite3.Connection, today: str | None = None, full=None
+) -> None:
     """Агрегат скорости продаж по ЖК поверх flat_lifecycle.
 
     active_now, new_7d/30d, absorbed_7d/30d, median_dom_days,
@@ -161,16 +170,19 @@ def build_block_velocity(conn: sqlite3.Connection, today: str | None = None) -> 
     """
     if today is None:
         today = conn.execute("SELECT MAX(scan_date) FROM snapshots").fetchone()[0]
-    td = _to_date(today)
     if today is None:
         # пустая БД — создаём пустую таблицу и выходим
         _create_empty_block_velocity(conn)
         return
-    # td=None — синтетические не-ISO даты (тесты): окна вырождаем в "всё", чтобы
-    # материализация не падала; в проде даты всегда ISO.
-    d7 = (td - timedelta(days=7)).isoformat() if td else ""
-    d30 = (td - timedelta(days=30)).isoformat() if td else ""
-    cov = _coverage_30d(_full_scan_dates(conn), today)
+    td = _to_date(today)
+    # td=None — не-ISO дата (синтетические тесты): окна делаем НЕДОСТИЖИМЫМИ
+    # ("9999-…"), чтобы не классифицировать все строки как new/absorbed. Раньше
+    # тут было "", и `first > ""` == True для всех строк → мусорные счётчики.
+    d7 = (td - timedelta(days=7)).isoformat() if td else "9999-99-99"
+    d30 = (td - timedelta(days=30)).isoformat() if td else "9999-99-99"
+    if full is None:
+        full = _full_scan_dates(conn)
+    cov = _coverage_30d(full, today)
 
     rows = conn.execute(
         """
@@ -278,11 +290,15 @@ def build_block_inventory_daily(conn: sqlite3.Connection) -> None:
         "SELECT scan_date, COUNT(*) FROM snapshots GROUP BY scan_date"
     ).fetchall()
     mx = max((c for _, c in counts), default=0)
-    dense = {d for d, c in counts if mx and c >= DENSE_DAY_FRACTION * mx}
+    dense = sorted(d for d, c in counts if mx and c >= DENSE_DAY_FRACTION * mx)
+    # Ограничиваем кривую недавним окном: кривая нужна свежая, а таблица иначе
+    # растёт бесконечно (snapshots не прунятся) и однажды пробьёт лимит
+    # Datasette _size → тихий обрыв кривой без сигнала.
+    keep = set(dense[-INVENTORY_MAX_DATES:])
     rows = conn.execute(
         "SELECT rowid, scan_date FROM block_inventory_daily"
     ).fetchall()
-    bad = [(rid,) for rid, d in rows if d not in dense]
+    bad = [(rid,) for rid, d in rows if d not in keep]
     conn.executemany("DELETE FROM block_inventory_daily WHERE rowid=?", bad)
     conn.execute(
         "CREATE INDEX idx_inv_block ON block_inventory_daily(block_id, scan_date)"
@@ -290,7 +306,24 @@ def build_block_inventory_daily(conn: sqlite3.Connection) -> None:
 
 
 def build_velocity_tables(conn: sqlite3.Connection) -> None:
-    """Полная пересборка velocity-витрин. Вызывается в конце refresh_materialized."""
-    build_flat_lifecycle(conn)
-    build_block_velocity(conn)
-    build_block_inventory_daily(conn)
+    """Полная пересборка velocity-витрин ОДНОЙ транзакцией.
+
+    BEGIN IMMEDIATE + commit/rollback: WAL-читатель Datasette видит либо старые
+    таблицы целиком, либо новые — никогда промежуточное «no such table» между
+    DROP и CREATE, и при ошибке в середине ничего не остаётся полуразвалённым.
+    `_full_scan_dates` считаем один раз (тяжёлый JOIN по всему snapshots).
+    Вызывается в конце refresh_materialized.
+    """
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.commit()  # сбросить незакоммиченную неявную транзакцию (в проде no-op)
+    full = _full_scan_dates(conn)
+    cur = conn.cursor()
+    cur.execute("BEGIN IMMEDIATE")
+    try:
+        build_flat_lifecycle(conn, full=full)
+        build_block_velocity(conn, full=full)
+        build_block_inventory_daily(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise

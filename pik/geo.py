@@ -160,6 +160,12 @@ def validate_city_by_coords(city: str, lat: float, lon: float) -> str:
         if haversine_km(lat, lon, *CITY_CENTERS[city]) <= CITY_MISMATCH_KM:
             return city
     nearest = min(CITY_CENTERS, key=lambda c: haversine_km(lat, lon, *CITY_CENTERS[c]))
+    # Если ДАЖЕ ближайший известный центр дальше порога — координаты не
+    # принадлежат ни одному охваченному городу (легитимный 'other'-регион,
+    # напр. Калмыкия/Элиста). НЕ выдумываем далёкий город: иначе distance_km
+    # пересчитается на сотни км и гео-гейт (GEO_MAX_KM) выбросит весь блок.
+    if haversine_km(lat, lon, *CITY_CENTERS[nearest]) > CITY_MISMATCH_KM:
+        return city
     if city in CITY_CENTERS and CITY_CENTERS[city] == CITY_CENTERS[nearest]:
         return city
     return nearest
