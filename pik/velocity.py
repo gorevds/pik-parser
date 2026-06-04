@@ -260,14 +260,24 @@ def build_block_inventory_daily(conn: sqlite3.Connection) -> None:
         f"""
         CREATE TABLE block_inventory_daily AS
         SELECT f.block_id AS block_id,
+               b.developer AS developer,
                s.scan_date AS scan_date,
                COUNT(DISTINCT s.flat_id) AS listed,
                SUM(CASE WHEN s.status IN ({reserved_set}) THEN 1 ELSE 0 END) AS reserved
         FROM snapshots s
         JOIN flats f ON f.id = s.flat_id
+        JOIN blocks b ON b.id = f.block_id
         GROUP BY f.block_id, s.scan_date
         """
     )
+    # Выкидываем частичные дни (не полный скан застройщика): иначе кривая
+    # остатка пилообразная — провалы из-за недосканивания, а не продаж.
+    keep = {(dev, d) for dev, dates in _full_scan_dates(conn).items() for d in dates}
+    rows = conn.execute(
+        "SELECT rowid, developer, scan_date FROM block_inventory_daily"
+    ).fetchall()
+    bad = [(rid,) for rid, dev, d in rows if (dev, d) not in keep]
+    conn.executemany("DELETE FROM block_inventory_daily WHERE rowid=?", bad)
     conn.execute(
         "CREATE INDEX idx_inv_block ON block_inventory_daily(block_id, scan_date)"
     )

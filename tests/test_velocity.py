@@ -226,3 +226,21 @@ def test_inventory_daily_curve_counts_listed_per_day():
     )
     assert rows["2026-06-01"] == 10
     assert rows["2026-06-04"] == 5
+
+
+def test_inventory_curve_excludes_partial_scan_days():
+    c = _conn()
+    _block(c, 1)
+    # дни 1,2,4,5 полные (30 лотов), день 3 — частичный (2 лота)
+    for fid in range(100, 130):
+        _flat(c, fid, 1)
+        _present(c, fid, [1, 2, 4, 5])
+    for fid in (200, 201):
+        _flat(c, fid, 1)
+        _present(c, fid, [1, 2, 3, 4, 5])
+    build_velocity_tables(c)
+    days = [r[0] for r in c.execute(
+        "SELECT scan_date FROM block_inventory_daily WHERE block_id=1 ORDER BY scan_date"
+    ).fetchall()]
+    assert "2026-06-03" not in days  # частичный день исключён из кривой
+    assert days == ["2026-06-01", "2026-06-02", "2026-06-04", "2026-06-05"]
