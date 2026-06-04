@@ -453,6 +453,94 @@
     .detail-kv { grid-template-columns: 110px 1fr; }
     .view-toggle { margin-right: 0; }
   }
+  /* ── Вкладки верхнего уровня ─────────────────────────────── */
+  .tabs {
+    display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .tabs button {
+    border: 1px solid var(--border); background: var(--card);
+    padding: 8px 18px; border-radius: 8px; cursor: pointer;
+    font-size: 14px; font-weight: 600; color: var(--muted);
+  }
+  .tabs button:hover { border-color: var(--accent); color: var(--accent); }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  /* ── Главная ─────────────────────────────────────────────── */
+  .home-hero { max-width: 880px; margin: 0 auto; }
+  .home-hero h2 { font-size: 26px; margin: 8px 0 12px; line-height: 1.25; }
+  .home-hero p { font-size: 15px; line-height: 1.6; color: #334155; }
+  .home-stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; margin: 22px 0;
+  }
+  .home-stat {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .home-stat .num { font-size: 24px; font-weight: 700; color: var(--accent);
+    font-variant-numeric: tabular-nums; }
+  .home-stat .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .home-cta { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 26px; }
+  .home-cta button {
+    border: none; border-radius: 8px; padding: 11px 20px; cursor: pointer;
+    font-size: 14px; font-weight: 600;
+  }
+  .home-cta button.primary { background: var(--accent); color: #fff; }
+  .home-cta button.ghost { background: var(--card); border: 1px solid var(--border); color: var(--text); }
+  .home-how { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px; margin-top: 10px; }
+  .home-how .card-how { background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; }
+  .home-how h3 { font-size: 15px; margin: 0 0 6px; }
+  .home-how p { font-size: 13px; line-height: 1.5; margin: 0; }
+  /* ── ЖК ──────────────────────────────────────────────────── */
+  .zhk-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 14px; }
+  .zhk-controls select, .zhk-controls input[type="text"] {
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  .zhk-controls input[type="text"] { min-width: 200px; }
+  .zhk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px; }
+  .zhk-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; cursor: pointer; transition: border-color .12s, box-shadow .12s;
+  }
+  .zhk-card:hover { border-color: var(--accent); box-shadow: 0 4px 14px rgba(0,0,0,.07); }
+  .zhk-card .zk-name { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
+  .zhk-card .zk-sub { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .zhk-card .zk-price { font-size: 14px; font-weight: 600; }
+  .zhk-card .zk-price small { color: var(--muted); font-weight: 400; }
+  .zk-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .zk-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px;
+    background: #eef2ff; color: #3730a3; font-weight: 600; white-space: nowrap; }
+  .zk-badge.sold { background: #ecfdf5; color: #047857; }
+  .zk-badge.new { background: #eff6ff; color: #1d4ed8; }
+  .zk-badge.dom { background: #fef9c3; color: #854d0e; }
+  .zk-badge.off { background: #fee2e2; color: #b91c1c; }
+  .zk-badge.lowconf { background: #f1f5f9; color: #64748b; }
+  .zk-curve { margin-top: 10px; }
+  .zk-curve .cap { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  /* ЖК-деталь (оверлей) */
+  .zhk-detail {
+    position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 1200;
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+  }
+  .zhk-detail[hidden] { display: none; }
+  .zhk-detail .inner {
+    background: var(--card); border-radius: 14px; padding: 22px 24px;
+    max-width: 560px; width: 100%; max-height: 88vh; overflow-y: auto;
+  }
+  .zhk-detail h2 { margin: 0 0 4px; font-size: 20px; }
+  .zhk-detail .dclose { float: right; border: none; background: transparent;
+    font-size: 20px; cursor: pointer; color: var(--muted); }
+  .zhk-detail .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr));
+    gap: 10px; margin: 16px 0; }
+  .zhk-detail .metric { background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; }
+  .zhk-detail .metric .m-num { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .zhk-detail .metric .m-lbl { font-size: 11px; color: var(--muted); }
+  .conf-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -479,6 +567,67 @@
 </header>
 
 <main>
+  <nav class="tabs" role="tablist" aria-label="Разделы">
+    <button type="button" data-tab="home" class="active" role="tab">🏠 Главная</button>
+    <button type="button" data-tab="zhk" role="tab">🏙 ЖК</button>
+    <button type="button" data-tab="objects" role="tab">📋 Все объекты</button>
+  </nav>
+
+  <section id="tab-home" class="tab-panel active">
+    <div class="home-hero">
+      <h2>Честные цены на новостройки Москвы — и как они меняются</h2>
+      <p>Независимый трекер первичного рынка: каждый день снимаем цены напрямую
+      с сайтов застройщиков и храним историю. Без рекламы, без агентов, без
+      накруток. Мы показываем то, что инкумбенты прячут: <b>реальную динамику
+      цен</b>, <b>настоящие скидки</b> (а не маркетинговые) и <b>скорость
+      продаж</b> по каждому ЖК.</p>
+      <div id="homeStats" class="home-stats"></div>
+      <div class="home-cta">
+        <button type="button" class="primary" data-go="zhk">🏙 ЖК и скорость продаж</button>
+        <button type="button" class="ghost" data-go="objects">📋 Все квартиры</button>
+      </div>
+      <div class="home-how">
+        <div class="card-how">
+          <h3>📉 История цен</h3>
+          <p>По каждой квартире — как менялась цена. Видно, дорожает ЖК или
+          застройщик распродаёт остатки.</p>
+        </div>
+        <div class="card-how">
+          <h3>🏷 Реальные скидки</h3>
+          <p>Сравниваем сегодняшнюю цену со вчерашней. «Скидка 20%» часто
+          оказывается возвратом к цене месячной давности.</p>
+        </div>
+        <div class="card-how">
+          <h3>⚡ Скорость продаж</h3>
+          <p>Сколько квартир в ЖК ушло за месяц, как быстро (дней в продаже) и
+          где продажи встали — сигнал, которого нет ни у кого публично.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-zhk" class="tab-panel">
+    <div class="zhk-controls controls-sticky">
+      <span>Город:</span><select id="zhkCity"><option value="all">все</option></select>
+      <span>Застройщик:</span><select id="zhkDev"><option value="all">все</option></select>
+      <input type="text" id="zhkSearch" placeholder="поиск по названию ЖК…">
+      <span>Сортировка:</span>
+      <select id="zhkSort">
+        <option value="absorbed">по продажам за 30д</option>
+        <option value="new">по новым лотам</option>
+        <option value="active">по числу в продаже</option>
+        <option value="dom">по скорости (DOM)</option>
+        <option value="price">по цене ₽/м²</option>
+        <option value="name">по названию</option>
+      </select>
+      <label><input type="checkbox" id="zhkActiveOnly" checked> только продающиеся</label>
+      <span id="zhkCount" style="color:var(--muted);font-size:13px"></span>
+    </div>
+    <div id="zhkGrid" class="zhk-grid"></div>
+  </section>
+  <div id="zhkDetail" class="zhk-detail" hidden></div>
+
+  <section id="tab-objects" class="tab-panel">
   <div class="controls controls-sticky">
     <span>Застройщик:</span>
     <select id="devFilter"><option value="all">все</option></select>
@@ -582,6 +731,7 @@
   <div id="grid"></div>
   <div id="cardList" aria-live="polite"></div>
   <div id="map"><div class="map-placeholder">загрузка карты…</div></div>
+  </section>
 </main>
 
 <!-- Боковая панель деталей: открывается по клику на строку таблицы -->
@@ -2229,7 +2379,261 @@ async function load() {
   // Применяем стартовый фильтр (город по умолчанию = Москва): наполняет
   // таблицу, статистику и список ЖК согласованно.
   applyFilter();
+
+  // ── Velocity / вкладка ЖК / роутинг по вкладкам ──────────────
+  [blockVel, invByBlock] = await Promise.all([loadBlockVelocity(), loadInventory()]);
+  zhkList = buildZhkList();
+  setupZhkControls();
+  setupTabs();
+  applyHash();
 }
+
+// ════════════ Вкладки, Главная, ЖК (velocity) ════════════════════
+let blockVel = {};       // block_id → строка block_velocity
+let invByBlock = {};     // block_id → [{scan_date, listed, reserved}]
+let zhkList = [];        // объединённый список ЖК (velocity + цены)
+
+function loadBlockVelocity() {
+  return fetch("/pik/block_velocity.json?_shape=array&_size=5000")
+    .then(r => r.ok ? r.json() : [])
+    .then(arr => Object.fromEntries(arr.map(b => [b.block_id, b])))
+    .catch(() => ({}));
+}
+function loadInventory() {
+  return fetch("/pik/block_inventory_daily.json?_shape=array&_size=100000")
+    .then(r => r.ok ? r.json() : [])
+    .then(arr => {
+      const m = {};
+      for (const x of arr) (m[x.block_id] = m[x.block_id] || []).push(x);
+      for (const k in m) m[k].sort((a, b) => a.scan_date < b.scan_date ? -1 : 1);
+      return m;
+    })
+    .catch(() => ({}));
+}
+
+const median = (a) => {
+  if (!a || !a.length) return null;
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+};
+const fmtRub = (n) => n == null ? "—" : (n / 1e6).toFixed(1) + " млн ₽";
+
+function buildZhkList() {
+  // агрегаты цен из today_all (лучшее доступное), join с block_velocity
+  const price = {};
+  for (const r of allRows) {
+    const id = r.block_id; if (id == null) continue;
+    let e = price[id];
+    if (!e) e = price[id] = { count: 0, prices: [], meters: [], rooms: new Set() };
+    e.count++;
+    const p = r["цена_по_программе"] || r["базовая_цена"]; if (p) e.prices.push(p);
+    if (r["база_за_м²"]) e.meters.push(r["база_за_м²"]);
+    if (r["комнат"]) e.rooms.add(r["комнат"]);
+  }
+  const out = [];
+  for (const id in blockVel) {
+    const v = blockVel[id], p = price[id] || {};
+    out.push({
+      id: +id, name: v.name || ("ЖК " + id), dev: v.developer, city: v.city,
+      metro: v.metro_name,
+      active: v.active_now || 0, absorbed30: v.absorbed_30d || 0,
+      absorbed7: v.absorbed_7d || 0, new30: v.new_30d || 0,
+      dom: v.median_dom_days, absorption: v.absorption_pct_30d,
+      coverage: v.coverage_30d || 0, status: v.block_status || "active",
+      minPrice: p.prices && p.prices.length ? arrayMin(p.prices) : null,
+      medMeter: p.meters && p.meters.length ? median(p.meters) : null,
+      rooms: p.rooms ? [...p.rooms] : [],
+      curve: (invByBlock[id] || []).map(x => x.listed),
+    });
+  }
+  return out;
+}
+
+function zhkCardHtml(z) {
+  const lowconf = z.coverage < 50;
+  const badges = [];
+  if (z.status === "off_market") {
+    badges.push(`<span class="zk-badge off">снят с продажи</span>`);
+  } else {
+    badges.push(`<span class="zk-badge">в продаже ${z.active}</span>`);
+    if (z.absorbed30 > 0) badges.push(`<span class="zk-badge sold">−${z.absorbed30}/30д</span>`);
+    if (z.dom != null) badges.push(`<span class="zk-badge dom">~${z.dom} дн в продаже</span>`);
+    if (z.new30 > 0) badges.push(`<span class="zk-badge new">+${z.new30} новых</span>`);
+  }
+  if (lowconf) badges.push(`<span class="zk-badge lowconf">мало данных</span>`);
+  const metroTxt = z.metro ? " · м. " + escapeHtml(z.metro) : "";
+  const curve = z.curve.length >= 2
+    ? `<div class="zk-curve"><div class="cap">остаток в продаже (динамика)</div>${renderInlineSparkline(z.curve)}</div>`
+    : "";
+  return `<div class="zhk-card" data-zhk-id="${z.id}">
+    <div class="zk-name">${escapeHtml(z.name)}</div>
+    <div class="zk-sub">${escapeHtml(z.dev || "")} · ${cityLabel(z.city)}${metroTxt}</div>
+    <div class="zk-price">от ${fmtRub(z.minPrice)} <small>· ${z.medMeter ? Math.round(z.medMeter).toLocaleString("ru-RU") + " ₽/м²" : "—"}</small></div>
+    <div class="zk-badges">${badges.join("")}</div>
+    ${curve}
+  </div>`;
+}
+
+function renderZhkList() {
+  const city = document.getElementById("zhkCity").value;
+  const dev = document.getElementById("zhkDev").value;
+  const q = document.getElementById("zhkSearch").value.trim().toLowerCase();
+  const activeOnly = document.getElementById("zhkActiveOnly").checked;
+  const sort = document.getElementById("zhkSort").value;
+  let list = zhkList.filter(z => {
+    if (city !== "all" && z.city !== city) return false;
+    if (dev !== "all" && z.dev !== dev) return false;
+    if (q && !(z.name || "").toLowerCase().includes(q)) return false;
+    if (activeOnly && z.status !== "active") return false;
+    return true;
+  });
+  const cmp = {
+    absorbed: (a, b) => b.absorbed30 - a.absorbed30,
+    new: (a, b) => b.new30 - a.new30,
+    active: (a, b) => b.active - a.active,
+    dom: (a, b) => (a.dom ?? 1e9) - (b.dom ?? 1e9),
+    price: (a, b) => (a.medMeter ?? 1e15) - (b.medMeter ?? 1e15),
+    name: (a, b) => (a.name || "").localeCompare(b.name || ""),
+  }[sort];
+  list.sort(cmp);
+  document.getElementById("zhkCount").textContent = `${list.length} ЖК`;
+  document.getElementById("zhkGrid").innerHTML =
+    list.map(zhkCardHtml).join("") ||
+    `<p style="color:var(--muted)">Ничего не найдено.</p>`;
+}
+
+function openZhkDetail(id) {
+  const z = zhkList.find(x => x.id === id);
+  if (!z) return;
+  const conf = z.coverage < 50
+    ? `<div class="conf-note">⚠ Достоверность ${z.coverage}%: у застройщика мало полных сканов за 30 дней — цифры продаж приблизительны.</div>`
+    : `<div class="conf-note">Достоверность данных: ${z.coverage}% дней с полным сканом за 30 дней.</div>`;
+  const m = (num, lbl) => `<div class="metric"><div class="m-num">${num}</div><div class="m-lbl">${lbl}</div></div>`;
+  const salesBlock = z.status === "off_market"
+    ? `<p style="color:#b91c1c;font-weight:600">Снят с продажи (распродан / завершён / убран застройщиком).</p>`
+    : `<div class="metrics">
+        ${m(z.active, "в продаже сейчас")}
+        ${m("−" + z.absorbed30, "ушло за 30 дней")}
+        ${m("+" + z.new30, "новых за 30 дней")}
+        ${m(z.dom != null ? z.dom + " дн" : "—", "медиана в продаже")}
+        ${m((z.absorption ?? 0) + "%", "распродано за 30д")}
+        ${m(z.medMeter ? Math.round(z.medMeter).toLocaleString("ru-RU") : "—", "₽/м²")}
+      </div>`;
+  const curve = z.curve.length >= 2
+    ? `<div class="zk-curve"><div class="cap">Остаток в продаже по дням (падает = раскупают)</div>${renderInlineSparkline(z.curve)}</div>`
+    : `<p style="color:var(--muted)">Истории пока мало для графика.</p>`;
+  const el = document.getElementById("zhkDetail");
+  el.innerHTML = `<div class="inner">
+    <button class="dclose" type="button" aria-label="Закрыть">✕</button>
+    <h2>${escapeHtml(z.name)}</h2>
+    <div class="zk-sub" style="color:var(--muted);font-size:13px">${escapeHtml(z.dev || "")} · ${cityLabel(z.city)}${z.metro ? " · м. " + escapeHtml(z.metro) : ""}</div>
+    ${salesBlock}
+    ${curve}
+    ${conf}
+    <div style="margin-top:16px">
+      <button type="button" class="home-cta-btn" id="zhkOpenTable"
+        style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 18px;cursor:pointer;font-weight:600">
+        📋 Открыть квартиры в таблице</button>
+    </div>
+  </div>`;
+  el.hidden = false;
+  el.querySelector(".dclose").onclick = () => { el.hidden = true; if (location.hash.startsWith("#zhk")) location.hash = "zhk"; };
+  el.onclick = (e) => { if (e.target === el) { el.hidden = true; if (location.hash.startsWith("#zhk")) location.hash = "zhk"; } };
+  document.getElementById("zhkOpenTable").onclick = () => openInTable(z);
+}
+
+function openInTable(z) {
+  // объекты-вкладка фильтрует по имени ЖК + город (иначе msk-дефолт скроет иногородний ЖК)
+  currentCity = z.city || "all";
+  const citySel = document.getElementById("cityFilter");
+  if ([...citySel.options].some(o => o.value === currentCity)) citySel.value = currentCity;
+  currentDev = "all"; document.getElementById("devFilter").value = "all";
+  currentZk = z.name;
+  const zkSel = document.getElementById("zkFilter");
+  if (![...zkSel.options].some(o => o.value === z.name)) {
+    const opt = document.createElement("option");
+    opt.value = z.name; opt.textContent = z.name; zkSel.appendChild(opt);
+  }
+  zkSel.value = z.name;
+  document.getElementById("zhkDetail").hidden = true;
+  location.hash = "objects";
+  applyFilter();
+}
+
+function renderHomeStats() {
+  const active = zhkList.filter(z => z.status === "active");
+  const nFlats = active.reduce((s, z) => s + z.active, 0);
+  const devs = new Set(zhkList.map(z => z.dev).filter(Boolean)).size;
+  const sold30 = active.reduce((s, z) => s + z.absorbed30, 0);
+  const new30 = active.reduce((s, z) => s + z.new30, 0);
+  const depth = Math.max(0, ...Object.values(invByBlock).map(a => a.length));
+  const stat = (n, l) => `<div class="home-stat"><div class="num">${n}</div><div class="lbl">${l}</div></div>`;
+  document.getElementById("homeStats").innerHTML =
+    stat(active.length, "ЖК в продаже") +
+    stat(nFlats.toLocaleString("ru-RU"), "квартир в продаже") +
+    stat(devs, "застройщиков") +
+    stat("−" + sold30.toLocaleString("ru-RU"), "ушло с рынка за 30 дней") +
+    stat("+" + new30.toLocaleString("ru-RU"), "новых лотов за 30 дней") +
+    stat(depth + " дн", "глубина истории");
+}
+
+function setupZhkControls() {
+  const citySel = document.getElementById("zhkCity");
+  const devSel = document.getElementById("zhkDev");
+  const cityCount = {}, devCount = {};
+  for (const z of zhkList) {
+    if (z.city) cityCount[z.city] = (cityCount[z.city] || 0) + 1;
+    if (z.dev) devCount[z.dev] = (devCount[z.dev] || 0) + 1;
+  }
+  for (const [c] of Object.entries(cityCount).sort((a, b) => b[1] - a[1])) {
+    const o = document.createElement("option");
+    o.value = c; o.textContent = cityLabel(c); citySel.appendChild(o);
+  }
+  for (const [d, n] of Object.entries(devCount).sort((a, b) => b[1] - a[1])) {
+    const o = document.createElement("option");
+    o.value = d; o.textContent = `${d} (${n})`; devSel.appendChild(o);
+  }
+  // по умолчанию — Москва (как в объектах)
+  if (cityCount["msk"]) citySel.value = "msk";
+  for (const id of ["zhkCity", "zhkDev", "zhkSort", "zhkActiveOnly"])
+    document.getElementById(id).addEventListener("change", renderZhkList);
+  document.getElementById("zhkSearch").addEventListener("input", renderZhkList);
+  document.getElementById("zhkGrid").addEventListener("click", (e) => {
+    const card = e.target.closest(".zhk-card");
+    if (card) location.hash = "zhk=" + card.dataset.zhkId;
+  });
+}
+
+function switchTab(tab) {
+  document.querySelectorAll(".tabs button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".tab-panel").forEach(p =>
+    p.classList.toggle("active", p.id === "tab-" + tab));
+  const vt = document.querySelector(".view-toggle");
+  if (vt) vt.style.display = tab === "objects" ? "inline-flex" : "none";
+  if (tab === "objects" && table) setTimeout(() => table.redraw(true), 0);
+  if (tab === "zhk") renderZhkList();
+  if (tab === "home") renderHomeStats();
+}
+
+function setupTabs() {
+  document.querySelectorAll(".tabs button").forEach(b =>
+    b.addEventListener("click", () => { location.hash = b.dataset.tab; }));
+  document.querySelectorAll("[data-go]").forEach(b =>
+    b.addEventListener("click", () => { location.hash = b.dataset.go; }));
+}
+
+function applyHash() {
+  const h = location.hash.slice(1);
+  const [tab, arg] = h.split("=");
+  const t = ["home", "zhk", "objects"].includes(tab) ? tab : "home";
+  switchTab(t);
+  const det = document.getElementById("zhkDetail");
+  if (t === "zhk" && arg) openZhkDetail(+arg);
+  else if (det) det.hidden = true;
+}
+window.addEventListener("hashchange", applyHash);
+
 load().catch((e) => {
   document.getElementById("grid").innerHTML =
     `<div style="padding:24px;color:#b91c1c">Ошибка загрузки: ${e}</div>`;
