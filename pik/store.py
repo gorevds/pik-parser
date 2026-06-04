@@ -212,6 +212,16 @@ WITH block_latest AS (
     FROM snapshots s
     JOIN flats f ON f.id = s.flat_id
     GROUP BY f.block_id
+),
+-- Этажность КОРПУСА, а не всего ЖК: blocks.floors_max — максимум по комплексу,
+-- и флэт в 20-этажном корпусе показывал «этажей_всего 69» (самая высокая башня
+-- ЖК). Берём max(floor) по корпусу (block_id+bulk_name) — нижняя честная оценка
+-- высоты именно этого корпуса; fallback на block-level floors_max.
+bulk_floors AS (
+    SELECT block_id, bulk_name, MAX(floor) AS floors
+    FROM flats
+    WHERE floor IS NOT NULL
+    GROUP BY block_id, bulk_name
 )
 SELECT
     f.id                      AS id,
@@ -252,7 +262,7 @@ SELECT
     s.status                  AS статус,
     s.finish                  AS отделка,
     f.settlement_date         AS заселение,
-    b.floors_max              AS "этажей_всего",
+    COALESCE(bf.floors, b.floors_max) AS "этажей_всего",
     b.address                 AS адрес,
     f.name                    AS артикул,
     f.url                     AS ссылка,
@@ -263,6 +273,7 @@ FROM flats f
 JOIN snapshots s ON s.flat_id = f.id
 JOIN block_latest bl ON bl.block_id = f.block_id AND bl.scan_date = s.scan_date
 LEFT JOIN blocks b ON b.id = f.block_id
+LEFT JOIN bulk_floors bf ON bf.block_id = f.block_id AND bf.bulk_name IS f.bulk_name
 """
 
 _TODAY_ONE_ROOM_SELECT = "SELECT * FROM today_all WHERE комнат = '1к'"

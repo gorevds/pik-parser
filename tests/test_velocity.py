@@ -228,6 +228,34 @@ def test_inventory_daily_curve_counts_listed_per_day():
     assert rows["2026-06-04"] == 5
 
 
+def test_today_all_floors_total_is_per_bulk_not_block_max():
+    """этажей_всего = высота КОРПУСА (max floor в нём), не максимум по ЖК.
+
+    Регресс: флэт в 20-этажном корпусе показывал «этажей_всего 69» — самую
+    высокую башню комплекса (blocks.floors_max)."""
+    from pik.store import refresh_materialized
+    c = _conn()
+    _block(c, 1, name="Южнопортовая", dev="Level")
+    c.execute("UPDATE blocks SET floors_max=69 WHERE id=1")  # max по всему ЖК
+    _flat(c, 11, 1, bulk="Корпус 12")
+    _snap(c, 11, 1)
+    _flat(c, 12, 1, bulk="Корпус 12")
+    _snap(c, 12, 1)
+    _flat(c, 20, 1, bulk="Корпус 3")
+    _snap(c, 20, 1)
+    c.execute("UPDATE flats SET floor=7 WHERE id=11")
+    c.execute("UPDATE flats SET floor=20 WHERE id=12")   # верх корпуса 12
+    c.execute("UPDATE flats SET floor=68 WHERE id=20")   # высокая башня
+    c.commit()
+    refresh_materialized(c)
+    assert c.execute(
+        'SELECT этаж, "этажей_всего" FROM today_all WHERE id=11'
+    ).fetchone() == (7, 20)        # корпус 12 → 20, НЕ 69
+    assert c.execute(
+        'SELECT "этажей_всего" FROM today_all WHERE id=20'
+    ).fetchone()[0] == 68          # высокая башня → своя высота
+
+
 def test_inventory_curve_excludes_partial_scan_days():
     c = _conn()
     _block(c, 1)
