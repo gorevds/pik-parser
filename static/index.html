@@ -458,9 +458,11 @@
     display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap;
   }
   .tabs button {
+    display: inline-flex; align-items: center; gap: 6px;
     border: 1px solid var(--border); background: var(--card);
-    padding: 8px 18px; border-radius: 8px; cursor: pointer;
+    padding: 9px 18px; border-radius: 8px; cursor: pointer;
     font-size: 14px; font-weight: 600; color: var(--muted);
+    line-height: 1.4; white-space: nowrap;
   }
   .tabs button:hover { border-color: var(--accent); color: var(--accent); }
   .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -1315,7 +1317,7 @@ function rentTooltip(r) {
 // flat_sparkline_30d. До прихода данных формат-функция вернёт «·».
 const sparklineByFlat = Object.create(null);
 
-function renderInlineSparkline(history) {
+function renderInlineSparkline(history, invert = false) {
   if (!history || history.length < 2) {
     return `<span style="color:#cbd5e1">·</span>`;
   }
@@ -1328,9 +1330,15 @@ function renderInlineSparkline(history) {
     `${(i / (n - 1) * (W - 4) + 2).toFixed(1)},` +
     `${(H - 2 - (y - yMin) / yRng * (H - 4)).toFixed(1)}`
   ).join(" ");
-  // тренд: рост = красный (дороже), падение = зелёный (для покупателя)
+  // Цена (invert=false): рост = красный (дороже), падение = зелёный (для
+  // покупателя). Остаток ЖК (invert=true): логика обратная — остаток РАСТЁТ =
+  // больше выбора/можно торговаться = зелёный; ПАДАЕТ = распродаётся/дефицит/
+  // торопись = красный.
+  const RED = "#dc2626", GREEN = "#16a34a", GREY = "#94a3b8";
   const diff = history[n - 1] - history[0];
-  const color = diff > 0 ? "#dc2626" : diff < 0 ? "#16a34a" : "#94a3b8";
+  const up = invert ? GREEN : RED;
+  const down = invert ? RED : GREEN;
+  const color = diff > 0 ? up : diff < 0 ? down : GREY;
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" ` +
     `style="display:block;margin:0 auto"><polyline points="${pts}" ` +
     `fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
@@ -2463,7 +2471,7 @@ function zhkCardHtml(z) {
   if (lowconf) badges.push(`<span class="zk-badge lowconf">мало данных</span>`);
   const metroTxt = z.metro ? " · м. " + escapeHtml(z.metro) : "";
   const curve = z.curve.length >= 2
-    ? `<div class="zk-curve"><div class="cap">остаток в продаже (динамика)</div>${renderInlineSparkline(z.curve)}</div>`
+    ? `<div class="zk-curve"><div class="cap">остаток в продаже (динамика)</div>${renderInlineSparkline(z.curve, true)}</div>`
     : "";
   return `<div class="zhk-card" data-zhk-id="${z.id}">
     <div class="zk-name">${escapeHtml(z.name)}</div>
@@ -2520,7 +2528,7 @@ function openZhkDetail(id) {
         ${m(z.medMeter ? Math.round(z.medMeter).toLocaleString("ru-RU") : "—", "₽/м²")}
       </div>`;
   const curve = z.curve.length >= 2
-    ? `<div class="zk-curve"><div class="cap">Остаток в продаже по дням (падает = раскупают)</div>${renderInlineSparkline(z.curve)}</div>`
+    ? `<div class="zk-curve"><div class="cap">Остаток в продаже по дням (падает = раскупают)</div>${renderInlineSparkline(z.curve, true)}</div>`
     : `<p style="color:var(--muted)">Истории пока мало для графика.</p>`;
   const el = document.getElementById("zhkDetail");
   el.innerHTML = `<div class="inner">
