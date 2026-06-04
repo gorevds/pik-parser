@@ -207,14 +207,18 @@ def build_block_velocity(conn: sqlite3.Connection, today: str | None = None) -> 
         denom = a["active"] + a["abs30"]
         absorption = round(100 * a["abs30"] / denom, 1) if denom else 0.0
         median_dom = round(statistics.median(a["doms"])) if a["doms"] else None
+        # active_now=0 при наличии лотов = ЖК ушёл с витрины целиком (снят /
+        # завершён / распродан) — это НЕ «темп продаж», поэтому отдельный статус,
+        # чтобы UI не выдавал «100% за месяц» за горячие продажи.
+        status = "off_market" if (a["active"] == 0 and a["total"] > 0) else "active"
         out.append((
             bid, a["name"], a["developer"], a["city"], a["metro"],
             a["total"], a["active"], a["new7"], a["new30"],
             a["abs7"], a["abs30"], median_dom, absorption,
-            cov.get(a["developer"], 0),
+            cov.get(a["developer"], 0), status,
         ))
     conn.executemany(
-        "INSERT INTO block_velocity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out
+        "INSERT INTO block_velocity VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out
     )
     conn.execute("CREATE INDEX idx_bv_block ON block_velocity(block_id)")
 
@@ -237,7 +241,8 @@ def _create_empty_block_velocity(conn: sqlite3.Connection) -> None:
             absorbed_30d       INTEGER,
             median_dom_days    INTEGER,
             absorption_pct_30d REAL,
-            coverage_30d       INTEGER
+            coverage_30d       INTEGER,
+            block_status       TEXT
         )
         """
     )

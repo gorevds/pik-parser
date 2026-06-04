@@ -183,6 +183,30 @@ def test_block_velocity_aggregates_absorbed_active_new():
     assert mdom == 3
     assert total == 25
     assert pct == round(100 * 5 / 25, 1)  # 20.0
+    status = c.execute(
+        "SELECT block_status FROM block_velocity WHERE block_id=1"
+    ).fetchone()[0]
+    assert status == "active"  # есть активные лоты
+
+
+def test_block_status_off_market_when_no_active_lots():
+    c = _conn()
+    _block(c, 1)
+    # фон в другом ЖК держит полные сканы дней 1..5
+    _block(c, 2)
+    for fid in range(300, 330):
+        _flat(c, fid, 2)
+        _present(c, fid, [1, 2, 3, 4, 5])
+    # ЖК 1: все лоты исчезли после дня 2 (ушёл с витрины целиком)
+    for fid in range(100, 110):
+        _flat(c, fid, 1)
+        _present(c, fid, [1, 2])
+    build_velocity_tables(c)
+    row = c.execute(
+        "SELECT active_now, block_status FROM block_velocity WHERE block_id=1"
+    ).fetchone()
+    assert row[0] == 0
+    assert row[1] == "off_market"
 
 
 def test_inventory_daily_curve_counts_listed_per_day():
