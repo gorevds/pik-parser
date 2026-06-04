@@ -2543,18 +2543,28 @@ function openZhkDetail(id) {
 }
 
 function openInTable(z) {
-  // объекты-вкладка фильтрует по имени ЖК + город (иначе msk-дефолт скроет иногородний ЖК)
-  currentCity = z.city || "all";
+  // Фильтр объектов-таблицы — по ИМЕНИ ЖК (currentZk), но имя берём из самой
+  // today_all по block_id, а не из block_velocity: для безымянных блоков и
+  // off_market ЖК они расходятся, и фильтр по «чужому» имени дал бы пустоту →
+  // rebuildZkDropdown сбросил бы на «все» и показал ВЕСЬ город (молча).
+  const blockRows = allRows.filter(r => r.block_id === z.id);
+  if (!blockRows.length) {
+    alert(`В ЖК «${z.name}» сейчас нет квартир в актуальной выдаче ` +
+          `(снят с продажи или нет свежих данных).`);
+    return;
+  }
+  const name = blockRows[0]["жк"];        // имя ровно как в таблице
+  currentCity = blockRows[0]["город"] || "all";
   const citySel = document.getElementById("cityFilter");
   if ([...citySel.options].some(o => o.value === currentCity)) citySel.value = currentCity;
   currentDev = "all"; document.getElementById("devFilter").value = "all";
-  currentZk = z.name;
+  currentZk = name;
   const zkSel = document.getElementById("zkFilter");
-  if (![...zkSel.options].some(o => o.value === z.name)) {
+  if (![...zkSel.options].some(o => o.value === name)) {
     const opt = document.createElement("option");
-    opt.value = z.name; opt.textContent = z.name; zkSel.appendChild(opt);
+    opt.value = name; opt.textContent = name; zkSel.appendChild(opt);
   }
-  zkSel.value = z.name;
+  zkSel.value = name;
   document.getElementById("zhkDetail").hidden = true;
   location.hash = "objects";
   applyFilter();
@@ -2611,7 +2621,13 @@ function switchTab(tab) {
     p.classList.toggle("active", p.id === "tab-" + tab));
   const vt = document.querySelector(".view-toggle");
   if (vt) vt.style.display = tab === "objects" ? "inline-flex" : "none";
-  if (tab === "objects" && table) setTimeout(() => table.redraw(true), 0);
+  // секция была display:none — Tabulator/Leaflet запомнили размер 0; пересчёт
+  // после показа. Карта (если активен режим карты) требует invalidateSize,
+  // иначе серые/смещённые тайлы; switchView сюда не поможет (mode===viewMode).
+  if (tab === "objects") {
+    if (viewMode === "map" && map) setTimeout(() => map.invalidateSize(), 0);
+    else if (table) setTimeout(() => table.redraw(true), 0);
+  }
   if (tab === "zhk") renderZhkList();
   if (tab === "home") renderHomeStats();
 }
