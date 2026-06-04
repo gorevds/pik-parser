@@ -2400,7 +2400,7 @@ function loadBlockVelocity() {
     .catch(() => ({}));
 }
 function loadInventory() {
-  return fetch("/pik/block_inventory_daily.json?_shape=array&_size=100000")
+  return fetch("/pik/block_inventory_daily.json?_shape=array&_size=80000")
     .then(r => r.ok ? r.json() : [])
     .then(arr => {
       const m = {};
